@@ -54,6 +54,18 @@ const column: ColumnDef = /* ... */ column.prop?.autoIncrement // boolean
 column.prop?.default // ColumnDefaultValue | undefined
 ```
 
+### autoIncrement 的两个来源
+
+1. **列级显式声明** —— `prop.i32().autoIncrement()`（当前 `@ts-grm/core@0.0.13` 下唯一可用）。
+2. **上游 ID 生成策略（向前兼容）** —— 宿主版本若提供该能力，`ctx.table(...).id("IDENTITY")`
+   的 id 列会被识别为自增。
+
+> 截至 `@ts-grm/core@0.0.13`，上游的 ID 生成策略尚未发布：其类型声明里不存在
+> `IDENTITY` / `idGenerator` / `__RootModelContext`。开发分支中虽有
+> `ctx.table(...).id("IDENTITY")`（存入 `Entity.idGenerator`），但运行时只有一处
+> 判空消费点，没有任何 `=== "IDENTITY"` 分支，`sql` 包的 DDL 层也未接入 ——
+> 即“能声明、不能生效”。因此补丁以列级声明为主，并保留上述向前兼容分支。
+
 ## 数据流
 
 补丁不 hook 上游的 schema 构建流程，而是利用既有的数据通路：
