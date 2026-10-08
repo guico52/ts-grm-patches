@@ -1,3 +1,6 @@
+# pnpm 工作区设置（pnpm 11+ 不再读取 package.json 的 pnpm 字段）
+# 本包是库，peer 依赖由宿主提供，不自动安装 @ts-grm/sql 的数据库驱动
 allowBuilds:
   esbuild: true
+autoInstallPeers: false
 # pnpm 工作区设置（pnpm 11+ 不再读取 package.json 的 pnpm 字段）

@@ -102,7 +102,7 @@ snapshots:
 lockfileVersion: '9.0'
 
 settings:
-  autoInstallPeers: true
+  autoInstallPeers: false
   excludeLinksFromLockfile: false
 
 importers:
@@ -112,6 +112,12 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.12.0)
+      '@ts-grm/core':
+        specifier: 0.0.13
+        version: 0.0.13
+      '@ts-grm/sql':
+        specifier: 0.0.13
+        version: 0.0.13
       '@types/node':
         specifier: ^26.6.4
         version: 26.6.4
@@ -652,6 +658,32 @@ packages:
     resolution: {integrity: sha512-JY1rQdWOJrKutORqKO1uzrHXV86jFiQzfLFKx2s8S1CjLXL9fC5LOIvk0q7Z7PXJvsByt+sdoE1Q2a9gBr4gLQ==}
     cpu: [x64]
     os: [win32]
+
+  '@standard-schema/spec@1.1.0':
+    resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@ts-grm/core@0.0.13':
+    resolution: {integrity: sha512-Ml/BGtyfs7Cqst7zBPrFSL5Cqw5nMDfSn8+MfYSE7fJqT40LLZ/h6eji/BlAXci0tRDx3pqXAPnLPojfCvx1dA==}
+
+  '@ts-grm/sql@0.0.13':
+    resolution: {integrity: sha512-mLjHQC//+8o5hrODw9l/75zLqdmBv8pd5lyyfpyvsGzxz/LIoI6tStXG7BdGJ7ibfz3aDI8dhr2vjs1ANJBNFw==}
+    peerDependencies:
+      better-sqlite3: '*'
+      mssql: '*'
+      mysql2: '*'
+      oracledb: '*'
+      pg: '*'
+    peerDependenciesMeta:
+      better-sqlite3:
+        optional: true
+      mssql:
+        optional: true
+      mysql2:
+        optional: true
+      oracledb:
+        optional: true
+      pg:
+        optional: true
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1747,6 +1779,16 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.64.2':
     optional: true
+
+  '@standard-schema/spec@1.1.0': {}
+
+  '@ts-grm/core@0.0.13':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+
+  '@ts-grm/sql@0.0.13':
+    dependencies:
+      '@ts-grm/core': 0.0.13
 
   '@types/chai@5.2.3':
     dependencies:
