@@ -1,8 +1,8 @@
-import { EntityManager, model, prop } from '@ts-grm/core'
+import { EntityManager, dsl, model, prop } from '@ts-grm/core'
 import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
 import { describe, expect, it } from 'vitest'
 
-import { applyPatches } from '../src/index'
+import { applyPatches, isColumnDefaultExpression } from '../src/index'
 
 interface ColumnLike {
   readonly name: string
@@ -42,6 +42,7 @@ const POST = model(
   class {
     id = prop.i64()
     title = prop.str(100).default('untitled')
+    createdAt = prop.dt().default(dsl.native.date`now()`)
   },
 )
 
@@ -91,6 +92,13 @@ describe('column patches end to end', () => {
     expect(columnOf(defs, 'USER', 'ID').prop?.autoIncrement).toBe(true)
     expect(columnOf(defs, 'USER', 'STATUS').prop?.default).toBe('active')
     expect(columnOf(defs, 'POST', 'TITLE').prop?.default).toBe('untitled')
+  })
+
+  it('把 SQL 表达式默认值一路带到列元数据', async () => {
+    const defs = await tableDefs()
+
+    const createdAt = columnOf(defs, 'POST', 'CREATED_AT').prop?.default
+    expect(isColumnDefaultExpression(createdAt)).toBe(true)
   })
 
   it('未声明的列保持非自增、无默认值', async () => {

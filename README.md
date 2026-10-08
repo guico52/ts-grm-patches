@@ -47,11 +47,24 @@ const USER = model(
 const id = prop.i32().autoIncrement().default(0)
 ```
 
+`default` 既接受字面量，也接受**上游表达式**（`dsl.native.*`，或任何 ts-grm 表达式节点），
+用于调用 SQL 函数：
+
+```ts
+prop.str(20).default('active') // 字面量
+prop.dt().default(dsl.native.date`now()`) // SQL 函数
+prop.str(36).default(dsl.native.str`uuid_generate_v4()`)
+```
+
+补丁只**承载**表达式节点，不渲染 SQL —— 把它翻译成 `default <SQL片段>` 是消费方的工作。
+消费方可用 `isColumnDefaultExpression(value)` 区分字面量与表达式（按 `__type().expressionLike`
+判别，不依赖 `instanceof`，可跨 ESM/CJS 双副本使用）。
+
 消费方从列元数据读取：
 
 ```ts
 const column: ColumnDef = /* ... */ column.prop?.autoIncrement // boolean
-column.prop?.default // ColumnDefaultValue | undefined
+column.prop?.default // ColumnDefaultValue | undefined（字面量或表达式节点）
 ```
 
 ### autoIncrement 的两个来源
