@@ -1,8 +1,15 @@
 {
   "name": "ts-grm-patches",
   "version": "0.1.0",
-  "description": "TODO: 一句话说明这个包的用途",
-  "keywords": [],
+  "description": "Extension patches for ts-grm: adds column-level autoIncrement and default support so ts-grm binaries and ts-grm-migrate can emit the matching DDL",
+  "keywords": [
+    "ts-grm",
+    "orm",
+    "schema-migration",
+    "auto-increment",
+    "default-value",
+    "patch"
+  ],
   "license": "MIT",
   "author": "guico <1305487489@qq.com>",
   "type": "module",
@@ -11,7 +18,9 @@
   },
   "packageManager": "pnpm@12.3.4",
   "files": [
-    "dist"
+    "dist",
+    "LICENSES",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "sideEffects": false,
   "main": "./dist/index.cjs",
@@ -41,11 +50,16 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "prepublishOnly": "pnpm clean && pnpm build && pnpm test"
+    "format:check": "prettier --check ."
+  },
+  "peerDependencies": {
+    "@ts-grm/core": ">=0.0.13 <0.0.14",
+    "@ts-grm/sql": ">=0.0.13 <0.0.14"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@ts-grm/core": "0.0.13",
+    "@ts-grm/sql": "0.0.13",
     "@types/node": "^26.6.4",
     "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^10.12.0",
