@@ -1,34 +1,48 @@
 # ts-grm-patches
 
-为 `ts-grm` 补齐**列的 `autoIncrement` 与 `default` 支持**，填平 `ts-grm` 与
-`ts-grm-migrate` 之间的需求鸿沟。
+English | [简体中文](docs/zh-CN/README.md)
 
-## 背景
+Extension patches for [ts-grm](https://github.com/babyfish-ct/ts-grm) that add
+**column-level `autoIncrement` and `default`**, closing the gap between `ts-grm`
+and `ts-grm-migrate`.
 
-`ts-grm` 的列元数据（`ColumnDef`，见 `packages/sql/src/impl/schema_def.ts`）只表达
-`name` / `type` / `nullable` / `length` / `precision` / `scale` / `when`，**不表达自增与列默认值**。
-由此导致两块能力缺失：
+## Why this exists
 
-- `ts-grm` 生成 `create table` 时无法输出自增列（`serial` / `identity` / `auto_increment`）与列默认值。
-- `ts-grm-migrate` 的模型适配器只能把它们写死为 `default: undefined` / `autoIncrement: false`
-  （见 `ts-grm-migrate` 的 `src/schema/adapter.ts`），因此迁移无法产出对应的数据库功能。
+ts-grm's column metadata (`ColumnDef`, see `packages/sql/src/impl/schema_def.ts`)
+expresses only `name` / `type` / `nullable` / `length` / `precision` / `scale` /
+`when`. It expresses **neither auto-increment nor column defaults**, which leaves
+two capabilities missing:
 
-本包作为 `ts-grm` 的**扩展补丁**，补齐这部分缺口。
+- ts-grm cannot emit self-incrementing columns (`serial` / `identity` /
+  `auto_increment`) or column defaults in its generated `create table`.
+- ts-grm-migrate's model adapter has to hard-code them as `default: undefined` /
+  `autoIncrement: false` (see `src/schema/adapter.ts` in that repository), so
+  migrations cannot produce the corresponding database features.
 
-## 能力范围
+This package is the **extension patch** that fills the gap.
 
-本包只负责**为 ts-grm 添加能力**：声明入口 + 元数据。
+## Scope
 
-**不负责 SQL 生成** —— 把 `autoIncrement` / `default` 翻译成 `serial` / `identity(1,1)` /
-`auto_increment` / `default` 子句，是消费方（例如 `ts-grm-migrate`）的职责。
+It only **adds capability to ts-grm**: the declaration entry points and the
+metadata.
 
-## 用法
+It does **not generate SQL**. Translating `autoIncrement` / `default` into
+`serial` / `identity(1,1)` / `auto_increment` / `default <...>` clauses is the
+consumer's responsibility (for example `ts-grm-migrate`).
+
+## Requirements
+
+`@ts-grm/core` and `@ts-grm/sql` are **peerDependencies**
+(`>=0.0.13 <0.0.14`), supplied by the host project. Upstream implementations are
+never bundled.
+
+## Usage
 
 ```ts
-import { model, prop } from '@ts-grm/core'
+import { dsl, model, prop } from '@ts-grm/core'
 import { applyPatches } from 'ts-grm-patches'
 
-// 必须在任何 model(...) 定义之前调用一次（幂等）
+// Call once before defining any model(...) — idempotent
 applyPatches()
 
 const USER = model(
@@ -37,91 +51,133 @@ const USER = model(
   class {
     id = prop.i32().autoIncrement()
     status = prop.str(20).default('active')
+    createdAt = prop.dt().default(dsl.native.date`now()`)
   },
 )
 ```
 
-两个修饰符都返回**新实例**（与上游 `nullable()` 同构），可自由链式组合，且不会污染原 prop：
+Both modifiers return a **new instance**, mirroring upstream `nullable()`. They
+chain freely and never mutate the original prop:
 
 ```ts
 const id = prop.i32().autoIncrement().default(0)
 ```
 
-`default` 既接受字面量，也接受**上游表达式**（`dsl.native.*`，或任何 ts-grm 表达式节点），
-用于调用 SQL 函数：
+### Defaults: literals or SQL expressions
+
+`default` accepts either a literal, constrained by the column's value type, or an
+upstream expression node (`dsl.native.*`, or any ts-grm expression) for calling
+SQL functions:
 
 ```ts
-prop.str(20).default('active') // 字面量
-prop.dt().default(dsl.native.date`now()`) // SQL 函数
-prop.str(36).default(dsl.native.str`uuid_generate_v4()`)
+prop.str(20).default('active') // literal
+prop.dt().default(dsl.native.date`now()`) // SQL function
+prop.str(36).default(dsl.native.str`uuid_generate_v4()`) // SQL function
 ```
 
-补丁只**承载**表达式节点，不渲染 SQL —— 把它翻译成 `default <SQL片段>` 是消费方的工作。
-消费方可用 `isColumnDefaultExpression(value)` 区分字面量与表达式（按 `__type().expressionLike`
-判别，不依赖 `instanceof`，可跨 ESM/CJS 双副本使用）。
+The patch only **carries** the expression node; it never renders SQL.
 
-消费方从列元数据读取：
+### Reading from column metadata
 
 ```ts
 const column: ColumnDef = /* ... */ column.prop?.autoIncrement // boolean
-column.prop?.default // ColumnDefaultValue | undefined（字面量或表达式节点）
+column.prop?.default // literal or expression node, or undefined
 ```
 
-### autoIncrement 的两个来源
+`isColumnDefaultExpression(value)` tells expression nodes apart from literals. It
+discriminates on the ts-grm node marker `__type().expressionLike` rather than
+`instanceof`, so it keeps working when both the ESM and the CJS copy of
+`@ts-grm/core` are loaded in one process.
 
-1. **列级显式声明** —— `prop.i32().autoIncrement()`（当前 `@ts-grm/core@0.0.13` 下唯一可用）。
-2. **上游 ID 生成策略（向前兼容）** —— 宿主版本若提供该能力，`ctx.table(...).id("IDENTITY")`
-   的 id 列会被识别为自增。
+### Where autoIncrement comes from
 
-> 截至 `@ts-grm/core@0.0.13`，上游的 ID 生成策略尚未发布：其类型声明里不存在
-> `IDENTITY` / `idGenerator` / `__RootModelContext`。开发分支中虽有
-> `ctx.table(...).id("IDENTITY")`（存入 `Entity.idGenerator`），但运行时只有一处
-> 判空消费点，没有任何 `=== "IDENTITY"` 分支，`sql` 包的 DDL 层也未接入 ——
-> 即“能声明、不能生效”。因此补丁以列级声明为主，并保留上述向前兼容分支。
+1. **Explicit column-level declaration** — `prop.i32().autoIncrement()`. This is
+   the only option available with `@ts-grm/core@0.0.13`.
+2. **Upstream ID-generation strategy (forward compatible)** — if the host ships
+   that capability, the id column of `ctx.table(...).id("IDENTITY")` is reported
+   as auto-increment.
 
-## 数据流
+> As of `@ts-grm/core@0.0.13` the upstream ID-generation strategy is unreleased:
+> `IDENTITY` / `idGenerator` / `__RootModelContext` do not appear in its type
+> declarations. The development branch does define
+> `ctx.table(...).id("IDENTITY")` (stored on `Entity.idGenerator`), but the
+> runtime has a single null check as its only consumer, no `=== "IDENTITY"`
+> branch, and the `sql` package's DDL layer never reads it — it can be declared
+> but not enforced. The patch therefore leads with the column-level declaration
+> and keeps the branch above purely forward compatible.
 
-补丁不 hook 上游的 schema 构建流程，而是利用既有的数据通路：
+## Data flow
+
+The patch does not hook the schema-build pipeline; it rides the existing data
+path:
 
 ```
-prop.i32().autoIncrement()          // 新增字段写入 __PropData
-  → EntityProp(this, name, __data)  // core 构建模型时原样传递（entity.ts）
-    → ColumnDef.prop                // schema_creator 持有该 EntityProp
+prop.i32().autoIncrement()          // writes a field into __PropData
+  → EntityProp(this, name, __data)  // core passes it through verbatim (entity.ts)
+    → ColumnDef.prop                // schema_creator holds that EntityProp
 ```
 
-`applyPatches()` 只做两件事：
+`applyPatches()` only does two things:
 
-1. 给 `__ScalarProp` 安装 `autoIncrement()` / `default(value)`
-2. 给 `spi.EntityProp` 安装 `autoIncrement` / `default` 只读读取器
+1. installs `autoIncrement()` / `default(value)` on `__ScalarProp`
+2. installs read-only `autoIncrement` / `default` readers on `spi.EntityProp`
 
-若上游将来原生提供同名成员，补丁会自动让位（不覆盖）。
+If upstream ever provides members with those names, the patch steps aside — it
+never overwrites.
 
-## 已知限制
+## API
 
-- 必须在定义任何 `model(...)` **之前**调用 `applyPatches()`。
-- 补丁作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
-  补丁只作用于其中一份。`@ts-grm/core` 与 `@ts-grm/sql` 是本包的 peerDependencies
-  （`>=0.0.13 <0.0.14`），由宿主项目提供，本包不打包上游实现。
+- `applyPatches(): void` — installs the patch. Idempotent; must run before any
+  `model(...)` definition.
+- `isColumnDefaultExpression(value: unknown): value is ColumnDefaultExpression` —
+  `true` when the default is a SQL expression node rather than a literal.
+- `ColumnDefaultLiteral` — `string | number | boolean | bigint`.
+- `ColumnDefaultExpression` — upstream expression node (`ExpressionLike`).
+- `ColumnDefaultValue` — `ColumnDefaultLiteral | ColumnDefaultExpression`.
+- `ColumnPatchData` — the fields the patch attaches to `__PropData`.
+- `PatchedEntityProp` — `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`.
 
-## 开发
+### Consuming from a migration engine
+
+```ts
+const d = columnDef.prop?.default
+if (isColumnDefaultExpression(d)) {
+  // d is an expression node (e.g. produced by dsl.native.*), carrying `parts`
+  // render it and emit `default <sql>`
+} else if (d !== undefined) {
+  // literal: escape it and emit `default '<...>'`
+}
+```
+
+## Known limitations
+
+- `applyPatches()` must run before any `model(...)` definition.
+- The patch extends prototypes of classes from `@ts-grm/core`. If two copies of
+  the upstream package (ESM and CJS) are loaded in one process, only one of them
+  gets patched. The expression discriminator above avoids this pitfall.
+
+## Development
 
 ```bash
-pnpm install        # 安装依赖
-pnpm dev            # 监听模式构建
-pnpm typecheck      # 类型检查 (tsc --noEmit)
+pnpm install        # install dependencies
+pnpm dev            # build in watch mode
+pnpm typecheck      # tsc --noEmit
 pnpm lint           # ESLint
-pnpm format         # Prettier 格式化
-pnpm test           # 运行测试（含端到端：真实 model → createSchema() → 列元数据）
-pnpm coverage       # 测试覆盖率
-pnpm build          # 构建到 dist/ (ESM + CJS + d.ts)
+pnpm format         # Prettier
+pnpm test           # vitest run (includes end-to-end: real model → createSchema() → column metadata)
+pnpm coverage       # test coverage
+pnpm build          # build to dist/ (ESM + CJS + d.ts)
 ```
 
-构建产物为双格式：ESM (`dist/index.js`) 与 CJS (`dist/index.cjs`)，类型声明通过
-`exports` 字段分别提供 `dist/index.d.ts` / `dist/index.d.cts`。
+The package is published in two formats: ESM (`dist/index.js`) and CJS
+(`dist/index.cjs`), with type declarations exposed through `exports` as
+`dist/index.d.ts` / `dist/index.d.cts`.
 
-发布与发布前验证由维护者在本地执行，本仓库不提供 CI 与 `prepublishOnly` 钩子。
+Publishing and pre-publish verification are performed locally by the maintainer;
+this repository ships no CI and no `prepublishOnly` hook.
 
-## 许可
+## License
 
-本项目原创代码使用 [MIT](LICENSE)。上游 `ts-grm` 使用 Apache-2.0，归属与许可全文见
-[third-party notices](THIRD_PARTY_NOTICES.md) 与 [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)。
+Original code in this project is [MIT](LICENSE). Upstream `ts-grm` is
+Apache-2.0; see [third-party notices](THIRD_PARTY_NOTICES.md) and the
+[full text](LICENSES/Apache-2.0.txt).

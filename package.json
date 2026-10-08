@@ -19,6 +19,7 @@
   "packageManager": "pnpm@12.3.4",
   "files": [
     "dist",
+    "docs",
     "LICENSES",
     "THIRD_PARTY_NOTICES.md"
   ],
