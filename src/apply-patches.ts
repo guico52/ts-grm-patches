@@ -11,8 +11,9 @@ interface PropDataCarrier {
 
 interface EntityPropCarrier {
   _data?: ColumnPatchData
+  readonly isIdProp?: boolean
+  readonly declaringEntity?: { readonly idGenerator?: unknown }
 }
-
 /**
  * 幂等安装：上游若已原生提供同名成员，则补丁让位，不覆盖。
  */
@@ -60,7 +61,15 @@ function installMetadataReaders(): void {
 
   defineOnce(proto, 'autoIncrement', {
     get(this: EntityPropCarrier) {
-      return this._data?.autoIncrement === true
+      if (this._data?.autoIncrement === true) {
+        return true
+      }
+      // 向前兼容：上游 dev 分支已加入 ID 生成策略声明
+      // (`ctx.table(...).id("IDENTITY")`，存入 `Entity.idGenerator`)，
+      // 但 0.0.13 尚未发布该能力，且它目前也没有下游消费点。
+      // 一旦宿主使用带该能力的版本，IDENTITY 即视为数据库自增。
+      // 注意：`isIdProp` 依赖 `declaringEntity`，必须后置求值。
+      return this.declaringEntity?.idGenerator === 'IDENTITY' && this.isIdProp === true
     },
     configurable: true,
   })

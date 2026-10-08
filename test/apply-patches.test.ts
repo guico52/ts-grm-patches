@@ -83,4 +83,33 @@ describe('applyPatches', () => {
     expect(entityProp.autoIncrement).toBe(false)
     expect(entityProp.default).toBeUndefined()
   })
+
+  // 0.0.13 尚未发布 ID 生成策略能力，这里用假对象验证向前兼容分支的形状。
+  function fakeEntityProp(idGenerator: unknown, isIdProp: boolean) {
+    const entityProp = Object.create(spi.EntityProp.prototype) as {
+      _data: Record<string, unknown>
+      autoIncrement: boolean
+      default: unknown
+    }
+    entityProp._data = {}
+    Object.defineProperty(entityProp, 'declaringEntity', {
+      value: { idGenerator },
+      configurable: true,
+    })
+    Object.defineProperty(entityProp, 'isIdProp', { value: isIdProp, configurable: true })
+    return entityProp
+  }
+
+  it('宿主声明 id("IDENTITY") 时视为自增（向前兼容）', () => {
+    expect(fakeEntityProp('IDENTITY', true).autoIncrement).toBe(true)
+  })
+
+  it('id("IDENTITY") 只作用于 id 列', () => {
+    expect(fakeEntityProp('IDENTITY', false).autoIncrement).toBe(false)
+  })
+
+  it('其他 ID 生成策略（序列/自定义生成器）不算自增', () => {
+    expect(fakeEntityProp({ sequenceName: 'user_id_seq' }, true).autoIncrement).toBe(false)
+    expect(fakeEntityProp(() => 1, true).autoIncrement).toBe(false)
+  })
 })
