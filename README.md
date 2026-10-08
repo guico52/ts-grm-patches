@@ -15,14 +15,68 @@
 
 本包作为 `ts-grm` 的**扩展补丁**，补齐这部分缺口。
 
-## 状态
+## 能力范围
 
-工程骨架已就绪，功能实现进行中。公开 API 尚未定型。
+本包只负责**为 ts-grm 添加能力**：声明入口 + 元数据。
 
-## 依赖关系
+**不负责 SQL 生成** —— 把 `autoIncrement` / `default` 翻译成 `serial` / `identity(1,1)` /
+`auto_increment` / `default` 子句，是消费方（例如 `ts-grm-migrate`）的职责。
 
-`@ts-grm/core` 与 `@ts-grm/sql` 是本包的 **peerDependencies**（`>=0.0.13 <0.0.14`），
-随宿主项目一同提供，本包不打包上游实现。
+## 用法
+
+```ts
+import { model, prop } from '@ts-grm/core'
+import { applyPatches } from 'ts-grm-patches'
+
+// 必须在任何 model(...) 定义之前调用一次（幂等）
+applyPatches()
+
+const USER = model(
+  'User',
+  'id',
+  class {
+    id = prop.i32().autoIncrement()
+    status = prop.str(20).default('active')
+  },
+)
+```
+
+两个修饰符都返回**新实例**（与上游 `nullable()` 同构），可自由链式组合，且不会污染原 prop：
+
+```ts
+const id = prop.i32().autoIncrement().default(0)
+```
+
+消费方从列元数据读取：
+
+```ts
+const column: ColumnDef = /* ... */ column.prop?.autoIncrement // boolean
+column.prop?.default // ColumnDefaultValue | undefined
+```
+
+## 数据流
+
+补丁不 hook 上游的 schema 构建流程，而是利用既有的数据通路：
+
+```
+prop.i32().autoIncrement()          // 新增字段写入 __PropData
+  → EntityProp(this, name, __data)  // core 构建模型时原样传递（entity.ts）
+    → ColumnDef.prop                // schema_creator 持有该 EntityProp
+```
+
+`applyPatches()` 只做两件事：
+
+1. 给 `__ScalarProp` 安装 `autoIncrement()` / `default(value)`
+2. 给 `spi.EntityProp` 安装 `autoIncrement` / `default` 只读读取器
+
+若上游将来原生提供同名成员，补丁会自动让位（不覆盖）。
+
+## 已知限制
+
+- 必须在定义任何 `model(...)` **之前**调用 `applyPatches()`。
+- 补丁作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
+  补丁只作用于其中一份。`@ts-grm/core` 与 `@ts-grm/sql` 是本包的 peerDependencies
+  （`>=0.0.13 <0.0.14`），由宿主项目提供，本包不打包上游实现。
 
 ## 开发
 
@@ -32,7 +86,7 @@ pnpm dev            # 监听模式构建
 pnpm typecheck      # 类型检查 (tsc --noEmit)
 pnpm lint           # ESLint
 pnpm format         # Prettier 格式化
-pnpm test           # 运行测试 (vitest run)
+pnpm test           # 运行测试（含端到端：真实 model → createSchema() → 列元数据）
 pnpm coverage       # 测试覆盖率
 pnpm build          # 构建到 dist/ (ESM + CJS + d.ts)
 ```
