@@ -1,12 +1,18 @@
-import type { __NullityType, spi } from '@ts-grm/core'
+import type { ExpressionLike, __NullityType, spi } from '@ts-grm/core'
+
+/** 字面量默认值。 */
+export type ColumnDefaultLiteral = string | number | boolean | bigint
 
 /**
- * 列的默认值。
+ * SQL 表达式默认值，复用上游的表达式 DSL（如 `dsl.native.date`now()``）。
  *
- * 这里只承载"值"本身，不承载任何 SQL 语法 —— 生成 `default` 子句是消费方
- * （例如 ts-grm-migrate）的职责。
+ * 这里只承载表达式节点本身，不承载任何 SQL 文本 —— 把它渲染成 `default <SQL>`
+ * 是消费方（例如 ts-grm-migrate）的职责。
  */
-export type ColumnDefaultValue = string | number | boolean | bigint
+export type ColumnDefaultExpression = ExpressionLike
+
+/** 列的默认值：字面量或 SQL 表达式。 */
+export type ColumnDefaultValue = ColumnDefaultLiteral | ColumnDefaultExpression
 
 /**
  * 补丁附加在 prop 定义数据（上游 `__PropData`）上的字段。
@@ -43,8 +49,12 @@ declare module '@ts-grm/core' {
   > {
     /** 标记该列由数据库生成自增值（自增主键等）。 */
     autoIncrement(): this
-    /** 声明该列的默认值。 */
-    default(value: T): this
+    /**
+     * 声明该列的默认值。
+     *
+     * 接受字面量（与列的值类型一致）或上游表达式（如 `dsl.native.date`now()``）。
+     */
+    default(value: T | ColumnDefaultExpression): this
   }
 }
 /* eslint-enable @typescript-eslint/no-unused-vars */

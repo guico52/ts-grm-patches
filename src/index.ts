@@ -1,2 +1,9 @@
 export { applyPatches } from './apply-patches'
-export type { ColumnDefaultValue, ColumnPatchData, PatchedEntityProp } from './types'
+export { isColumnDefaultExpression } from './defaults'
+export type {
+  ColumnDefaultExpression,
+  ColumnDefaultLiteral,
+  ColumnDefaultValue,
+  ColumnPatchData,
+  PatchedEntityProp,
+} from './types'
