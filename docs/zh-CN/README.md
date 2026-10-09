@@ -116,6 +116,14 @@ globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(curren
   缺少该列的模型上属性是 `undefined`，直接 `table.someColumn.eq(...)` 会抛 `TypeError`
   并打断整个查询。请优先用 `addGlobalFor(column, build)`（缺少该列的模型自动跳过），
   或自行判断：`(table) => table.tenantId?.eq(id)`。
+- `addGlobalFor` 还会在**查找阶段**筛选：缺少该列的实体拿到的是空列表。这不只是正确性问题
+  —— 上游据 `getFilters(entity).length === 0` 判断关联能否直接读取外键
+  （`association_resolver.ts`），非空列表会退化为 join，对可空关联可能改变结果集。
+  自由形式的 `addGlobal()` 无法预知适用性，因此对每个实体都返回非空，会放弃该优化。
+- 对同一个 client 重复安装是幂等的。`newSqlClient(client, options)` 会**新建实例**、
+  不继承包装 —— 需要调用 `installGlobalFilters(derived, manager)` 让多个 client 共享同一个管理器。
+- `manager.unknownColumns(models)` 列出给定模型中都不存在的列名，用于发现拼写错误
+  （否则该过滤器会在所有模型上静默失效）。
 - 过滤器内部可通过 `table.__entity` 拿到当前的 `spi.Entity`，因此可以把全局过滤器限定到
   或排除掉特定模型。
 - 过滤器的类型参数是 `AnyModel`，因此其中的字段访问**不受编译期校验**：写错字段名要到
@@ -146,14 +154,15 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
 - `applyPatches(): void` —— 安装补丁。幂等；必须在任何 `model(...)` 定义之前调用。
 - `isColumnDefaultExpression(value: unknown): value is ColumnDefaultExpression` ——
   默认值是 SQL 表达式节点而非字面量时返回 `true`。
-- `ColumnDefaultLiteral` —— `string | number | boolean | bigint`。
+- `ColumnDefaultLiteral` —— `string | number | boolean | bigint | Date`。
 - `ColumnDefaultExpression` —— 上游表达式节点（`ExpressionLike`）。
 - `ColumnDefaultValue` —— `ColumnDefaultLiteral | ColumnDefaultExpression`。
 - `ColumnPatchData` —— 补丁附加在 `__PropData` 上的字段。
 - `PatchedEntityProp` —— `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`。
 - `installGlobalFilters(client): GlobalFilterManager` —— 让一个已创建的 client 对所有模型生效。
 - `GlobalFilterManager` —— `addGlobal(filter)`（对所有模型生效）、
-  `addGlobalFor(column, build)`（缺少该列的模型自动跳过）与 `globalFilters`。
+  `addGlobalFor(column, build)`（缺少该列的模型自动跳过）、`unknownColumns(models)`
+  与 `globalFilters`。
 - `GlobalFilter` —— 上游的 `AnyFilter`。
 
 ### 迁移引擎侧的消费方式

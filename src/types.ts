@@ -1,7 +1,13 @@
 import type { ExpressionLike, __NullityType, spi } from '@ts-grm/core'
 
-/** 字面量默认值。 */
-export type ColumnDefaultLiteral = string | number | boolean | bigint
+/**
+ * 字面量默认值。
+ *
+ * `Date` 也在其中：`prop.dt()` 的值类型就是 `Date`，所以 `default(new Date())` 是合法
+ * 声明，运行时会把这个 `Date` 原样带到列元数据上。至于如何把它写成 SQL 字面量
+ （时区、格式），由消费方决定。
+ */
+export type ColumnDefaultLiteral = string | number | boolean | bigint | Date
 
 /**
  * SQL 表达式默认值，复用上游的表达式 DSL（如 `dsl.native.date`now()``）。
@@ -40,7 +46,12 @@ export type PatchedEntityProp = spi.EntityProp & {
  * 声明合并要求泛型参数列表与上游类声明完全一致，因此 TNullity / TCustomized
  * 虽未在接口体内使用，也必须保留。
  */
-/* eslint-disable @typescript-eslint/no-unused-vars */
+/*
+ * 声明合并要求泛型参数列表与上游类声明完全一致，因此 TNullity / TCustomized
+ * 虽未在接口体内使用，也必须保留；而增强 `spi` 命名空间下的成员，也只能用
+ * namespace + interface 合并的写法。
+ */
+/* eslint-disable @typescript-eslint/no-namespace, @typescript-eslint/no-unused-vars */
 declare module '@ts-grm/core' {
   interface __ScalarProp<
     T,
@@ -56,5 +67,13 @@ declare module '@ts-grm/core' {
      */
     default(value: T | ColumnDefaultExpression): this
   }
+
+  // 让 `spi.EntityProp` 直接带上补丁的只读属性，消费方无需类型断言。
+  namespace spi {
+    interface EntityProp {
+      readonly autoIncrement: boolean
+      readonly default: ColumnDefaultValue | undefined
+    }
+  }
 }
-/* eslint-enable @typescript-eslint/no-unused-vars */
+/* eslint-enable @typescript-eslint/no-namespace, @typescript-eslint/no-unused-vars */

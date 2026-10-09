@@ -139,6 +139,69 @@ describe('installGlobalFilters', () => {
     expect(filter(tableOf(entityOf(AUDIT)))).toBeUndefined()
   })
 
+  it('缺列实体在 getFilters 阶段就返回空数组，保住关联查询的直接读外键优化', () => {
+    const client = clientWith()
+    installGlobalFilters(client).addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
+
+    // 上游据 getFilters(...).length === 0 决定关联能否直接读取外键
+    // （association_resolver.ts:127）
+    expect(filtersOf(client, entityOf(ORDER))).toHaveLength(1)
+    expect(filtersOf(client, entityOf(AUDIT))).toHaveLength(0)
+  })
+
+  it('对照：addGlobal() 无法预判适用性，对缺列实体也返回非空（会放弃关联优化）', () => {
+    const client = clientWith()
+    installGlobalFilters(client).addGlobal(noopFilter)
+
+    expect(filtersOf(client, entityOf(AUDIT))).toHaveLength(1)
+  })
+
+  it('对同一个 client 重复安装是幂等的，返回同一个管理器', () => {
+    const client = clientWith()
+    const first = installGlobalFilters(client)
+    const second = installGlobalFilters(client)
+
+    expect(second).toBe(first)
+    second.addGlobal(noopFilter)
+    // 若重复包装，这里会变成 2
+    expect(filtersOf(client, entityOf(ORDER))).toHaveLength(1)
+  })
+
+  it('派生客户端不会继承包装，需显式安装并可共享同一批过滤器', () => {
+    const base = clientWith()
+    const manager = installGlobalFilters(base)
+    manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
+
+    // 上游 newSqlClient(client, options) 会新建实例
+    const derived = newSqlClient(base, {})
+    expect(filtersOf(derived, entityOf(ORDER))).toHaveLength(0)
+
+    installGlobalFilters(derived, manager)
+    expect(filtersOf(derived, entityOf(ORDER))).toHaveLength(1)
+    expect(filtersOf(derived, entityOf(AUDIT))).toHaveLength(0)
+  })
+
+  it('传入非本包创建的管理器时明确报错', () => {
+    const client = clientWith()
+    const foreign = {
+      addGlobal: () => foreign,
+      globalFilters: [],
+      unknownColumns: () => [],
+    }
+    expect(() => installGlobalFilters(client, foreign as never)).toThrow(
+      /not created by this package/,
+    )
+  })
+
+  it('unknownColumns 报出拼错的列名，避免过滤器静默失效', () => {
+    const client = clientWith()
+    const manager = installGlobalFilters(client)
+    manager.addGlobalFor('tenantId', () => undefined)
+    manager.addGlobalFor('tenandId', () => undefined)
+
+    expect(manager.unknownColumns([ORDER as never, AUDIT as never])).toEqual(['tenandId'])
+  })
+
   it('对照组：直接访问缺失的列会抛错 —— 这正是 addGlobalFor 要防的', () => {
     const auditTable = tableOf(entityOf(AUDIT)) as {
       tenantId?: { eq(value: number): unknown }
