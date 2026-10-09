@@ -91,6 +91,32 @@ column.prop?.default // 字面量或表达式节点，或 undefined
 > 消费点，没有任何 `=== "IDENTITY"` 分支，`sql` 包的 DDL 层也未接入 —— 即"能声明、不能生效"。
 > 因此补丁以列级声明为主，并保留上述向前兼容分支。
 
+## 全局过滤器
+
+`createGlobalFilterManager()` 构建一个对**所有**模型生效的 `FilterManager`，无需逐个登记：
+
+```ts
+import { createGlobalFilterManager } from 'ts-grm-patches'
+import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
+
+const filterManager = createGlobalFilterManager()
+filterManager.addGlobal((table) => table.tenantId.eq(currentTenantId))
+
+const client = newSqlClient(new PostgresDriver(pool), { entityManager, filterManager })
+```
+
+- 上游的 `FilterManager.add(model, filter)` 绑定单个模型；全局过滤器**不需要枚举模型** ——
+  查找被 Proxy 接管，任何实体（包括你从未注册过的模型）都会拿到它们。
+- 全局过滤器排在上游的模型级过滤器**之前**，全部过滤器在上游以 `AND` 组合，
+  `add(model, filter)` 的用法不受影响。
+- 过滤器内部可通过 `table.__entity` 拿到当前的 `spi.Entity`，因此可以把全局过滤器限定到
+  或排除掉特定模型。
+- 过滤器的类型参数是 `AnyModel`，因此其中的字段访问**不受编译期校验**：写错字段名要到
+  生成查询时才暴露，而不是写代码时。
+- **必须在创建 client 之前注册。** 客户端在构造时会对过滤器做一次快照，之后注册的不生效。
+- 这依赖上游客户端实现里用 `as any` 调用的私有 `_toMap()` 通道。那是内部契约，
+  上游重构可能使其失效。
+
 ## 数据流
 
 补丁不 hook 上游的 schema 构建流程，而是利用既有的数据通路：
@@ -118,6 +144,9 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
 - `ColumnDefaultValue` —— `ColumnDefaultLiteral | ColumnDefaultExpression`。
 - `ColumnPatchData` —— 补丁附加在 `__PropData` 上的字段。
 - `PatchedEntityProp` —— `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`。
+- `createGlobalFilterManager(): GlobalFilterManager` —— 对所有模型施加过滤器的 `FilterManager`。
+- `GlobalFilterManager` —— 上游 `FilterManager` 加上 `addGlobal(filter)` 与 `globalFilters`。
+- `GlobalFilter` —— 上游的 `AnyFilter`。
 
 ### 迁移引擎侧的消费方式
 
@@ -136,6 +165,8 @@ if (isColumnDefaultExpression(d)) {
 - 必须在定义任何 `model(...)` **之前**调用 `applyPatches()`。
 - 补丁作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
   补丁只作用于其中一份。上面的表达式判别函数已避开这个坑。
+- `createGlobalFilterManager()` 必须在 `newSqlClient()` 之前注册过滤器，且依赖上游私有的
+  `_toMap()` 通道（见「全局过滤器」）。
 
 ## 开发
 
