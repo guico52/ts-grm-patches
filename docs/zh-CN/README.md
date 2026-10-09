@@ -120,10 +120,12 @@ globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(curren
   —— 上游据 `getFilters(entity).length === 0` 判断关联能否直接读取外键
   （`association_resolver.ts`），非空列表会退化为 join，对可空关联可能改变结果集。
   自由形式的 `addGlobal()` 无法预知适用性，因此对每个实体都返回非空，会放弃该优化。
-- 对同一个 client 重复安装是幂等的。`newSqlClient(client, options)` 会**新建实例**、
-  不继承包装 —— 需要调用 `installGlobalFilters(derived, manager)` 让多个 client 共享同一个管理器。
-- `manager.unknownColumns(models)` 列出给定模型中都不存在的列名，用于发现拼写错误
-  （否则该过滤器会在所有模型上静默失效）。
+- 对同一个 client 重复安装是幂等的：不传参数（或传已安装的那个）会返回已安装的管理器，
+  而传入**不同**的管理器会直接报错，而不是被静默忽略。`newSqlClient(client, options)`
+  会**新建实例**、不继承包装 —— 需要调用 `installGlobalFilters(derived, manager)`
+  让多个 client 共享同一个管理器。
+- `manager.unknownColumns(models)` 列出给定模型中都不存在的列名；继承来的列算存在，
+  与适用性判断的规则一致。用于发现拼写错误（否则该过滤器会在所有模型上静默失效）。
 - 过滤器内部可通过 `table.__entity` 拿到当前的 `spi.Entity`，因此可以把全局过滤器限定到
   或排除掉特定模型。
 - 过滤器的类型参数是 `AnyModel`，因此其中的字段访问**不受编译期校验**：写错字段名要到
@@ -156,7 +158,8 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
   默认值是 SQL 表达式节点而非字面量时返回 `true`。
 - `ColumnDefaultLiteral` —— `string | number | boolean | bigint | Date`。
 - `ColumnDefaultExpression` —— 上游表达式节点（`ExpressionLike`）。
-- `ColumnDefaultValue` —— `ColumnDefaultLiteral | ColumnDefaultExpression`。
+- `ColumnDefaultValue` —— 字面量、表达式，或列类型可能承载的其他值
+  （`prop.enumSet` 的数组、`prop.json` 的对象、自定义标量）。
 - `ColumnPatchData` —— 补丁附加在 `__PropData` 上的字段。
 - `PatchedEntityProp` —— `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`。
 - `installGlobalFilters(client): GlobalFilterManager` —— 让一个已创建的 client 对所有模型生效。

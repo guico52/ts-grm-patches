@@ -141,11 +141,14 @@ globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(curren
   (`association_resolver.ts`), so a non-empty list falls back to a join and can change the
   result set for nullable associations. Plain `addGlobal()` cannot know applicability, so it
   makes that list non-empty for every entity and gives up that optimization.
-- Installation is idempotent per client. `newSqlClient(client, options)` builds a **new**
-  instance that does not inherit the wrapper — call
-  `installGlobalFilters(derived, manager)` to share one manager across clients.
-- `manager.unknownColumns(models)` lists column names that no given model declares, catching
-  typos that would otherwise make a filter silently never apply.
+- Installation is idempotent per client: re-installing with no argument (or with the same
+  manager) returns the installed one, while passing a **different** manager throws instead of
+  being silently ignored. `newSqlClient(client, options)` builds a **new** instance that does
+  not inherit the wrapper — call `installGlobalFilters(derived, manager)` to share one manager
+  across clients.
+- `manager.unknownColumns(models)` lists column names that no given model has — inherited
+  columns count as present, matching how applicability is decided — catching typos that would
+  otherwise make a filter silently never apply.
 - Inside a filter, `table.__entity` exposes the current `spi.Entity`, so a global filter
   can scope itself to — or exclude — specific models.
 - The filter is typed against `AnyModel`, so field access inside it is **not** verified at
@@ -180,7 +183,8 @@ never overwrites.
   `true` when the default is a SQL expression node rather than a literal.
 - `ColumnDefaultLiteral` — `string | number | boolean | bigint | Date`.
 - `ColumnDefaultExpression` — upstream expression node (`ExpressionLike`).
-- `ColumnDefaultValue` — `ColumnDefaultLiteral | ColumnDefaultExpression`.
+- `ColumnDefaultValue` — literal, expression, or any other value that column type may carry
+  (arrays from `prop.enumSet`, objects from `prop.json`, custom scalars).
 - `ColumnPatchData` — the fields the patch attaches to `__PropData`.
 - `PatchedEntityProp` — `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`.
 - `installGlobalFilters(client): GlobalFilterManager` — makes an existing client apply
