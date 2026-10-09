@@ -1,21 +1,20 @@
-import type { spi } from '@ts-grm/core'
-import { FilterManager } from '@ts-grm/sql'
+import type { SqlClient, spi } from '@ts-grm/core'
 import type { AnyFilter } from '@ts-grm/sql'
 
 /**
  * 对所有模型生效的过滤器。
  *
- * 与上游 per-model 的 `Filter` 同形，因此在过滤器内部可以按
- * `table.__entity.name` 之类的信息决定是否真正应用。
+ * 与上游 per-model 的 `Filter` 同形。过滤器收到的 table 是上游查询期对象，
+ * 其 `__entity` 指向当前的 `spi.Entity`，可用它把过滤器限定到或排除掉特定模型。
  */
 export type GlobalFilter = AnyFilter
 
-export interface GlobalFilterManager extends FilterManager {
+export interface GlobalFilterManager {
   /**
    * 注册一个对**所有**模型生效的过滤器。
    *
-   * 同一实体上，全局过滤器排在上游 `add(model, filter)` 注册的模型级过滤器之前，
-   * 各自按注册顺序叠加。
+   * 与上游在 client 构造时快照 `filterManager` 不同，这里注册后**立即生效**，
+   * 不必赶在 `newSqlClient()` 之前。
    */
   addGlobal(filter: GlobalFilter | undefined): this
 
@@ -23,59 +22,54 @@ export interface GlobalFilterManager extends FilterManager {
   readonly globalFilters: ReadonlyArray<GlobalFilter>
 }
 
-interface FilterMapCarrier {
-  _toMap(): ReadonlyMap<spi.Entity, ReadonlyArray<AnyFilter>> | undefined
+interface FiltersHolder {
+  getFilters(entity: spi.Entity): ReadonlyArray<AnyFilter>
 }
 
 /**
- * 创建全局过滤器管理器，可直接交给 `newSqlClient` 的 `filterManager` 选项。
+ * 让一个已创建的 client 具备全局过滤器能力。
  *
- * 上游 `FilterManager.add()` 必须绑定具体模型，没有「对所有模型生效」的能力；
- * 而它向消费方暴露过滤器的通道是私有的 `_toMap()`。这里保留那条通道的形状，
- * 用一个 Proxy 在其 `get()` 上叠加全局过滤器 —— 因此**不需要枚举模型**，
- * 任何实体的查询都会拿到它们，连尚未出现在 `add()` 里的模型也不例外。
+ * 上游 `FilterManager.add()` 必须绑定具体模型，没有「对所有模型生效」的能力，
+ * 因此这里改在公开接口 `getFilters(entity)` 上叠加 —— 它是
+ * `SqlClientImplementor` 的成员（受 semver 保护），入参就是原始实体，
+ * 且其内部的过滤器缓存不受影响。
  *
- * 注意：客户端在构造时会对过滤器做一次快照，所以必须在 `newSqlClient()` **之前**
- * 注册全局过滤器；之后再注册不会生效。
+ * 选择这条通道还避开了 `FilterManager` 那条私有 `_toMap()` 路径：
+ * 后者在上游只有一处调用、且以 `as any` 强转私有方法，改名不需要发大版本；
+ * 同时 client 会在构造时快照过滤器，注册时机也受限。
+ *
+ * 若当前 client 没有 `getFilters`（上游接口发生变化），这里会直接抛错，
+ * 而不是静默失效。
  */
-export function createGlobalFilterManager(): GlobalFilterManager {
-  const manager = new FilterManager() as GlobalFilterManager
+export function installGlobalFilters(client: SqlClient): GlobalFilterManager {
+  const holder = client as unknown as Partial<FiltersHolder>
+  if (typeof holder.getFilters !== 'function') {
+    throw new Error(
+      'installGlobalFilters(): the SqlClient does not expose getFilters(); ' +
+        'the installed @ts-grm/sql is not supported by this patch version.',
+    )
+  }
+
   const globalFilters: GlobalFilter[] = []
+  const original = holder.getFilters.bind(client)
 
-  const originalToMap = (manager as unknown as FilterMapCarrier)._toMap.bind(manager)
+  holder.getFilters = (entity: spi.Entity) => {
+    const own = original(entity)
+    if (globalFilters.length === 0) {
+      return own
+    }
+    return [...globalFilters, ...own]
+  }
 
-  Object.defineProperty(manager, '_toMap', {
-    configurable: true,
-    writable: true,
-    value: () => {
-      const base = originalToMap() ?? new Map<spi.Entity, ReadonlyArray<AnyFilter>>()
-      return new Proxy(base, {
-        get(target, property) {
-          if (property === 'get') {
-            return (entity: spi.Entity): ReadonlyArray<AnyFilter> => [
-              ...globalFilters,
-              ...(target.get(entity) ?? []),
-            ]
-          }
-          const value = Reflect.get(target, property)
-          return typeof value === 'function' ? (value as CallableFunction).bind(target) : value
-        },
-      })
-    },
-  })
-
-  Object.defineProperty(manager, 'addGlobal', {
-    value(filter: GlobalFilter | undefined) {
+  return {
+    addGlobal(filter: GlobalFilter | undefined) {
       if (filter != null) {
         globalFilters.push(filter)
       }
-      return manager
+      return this
     },
-  })
-
-  Object.defineProperty(manager, 'globalFilters', {
-    get: () => [...globalFilters],
-  })
-
-  return manager
+    get globalFilters() {
+      return [...globalFilters]
+    },
+  }
 }
