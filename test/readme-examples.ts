@@ -24,9 +24,10 @@ const USER = model(
 )
 void USER
 
-// 链式组合，且不污染原 prop
-const chained = prop.i32().autoIncrement().default(0)
-void chained
+// 两个修饰符各自独立使用（README 特意不把它们链在一起）
+const selfIncrementingId = prop.i32().autoIncrement()
+const defaultedStatus = prop.str(20).default('active')
+void [selfIncrementingId, defaultedStatus]
 
 // —— Defaults: literals or SQL expressions ——
 const asLiteral = prop.str(20).default('active')
