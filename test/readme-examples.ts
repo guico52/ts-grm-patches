@@ -64,7 +64,7 @@ declare const currentTenantId: number
 declare const pool: never
 declare const entityManager: never
 
-const globalFilters = createGlobalFilterManager([ORDER, CUSTOMER])
+const globalFilters = await createGlobalFilterManager([ORDER, CUSTOMER])
 globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(currentTenantId))
 
 const client = newSqlClient(new PostgresDriver(pool), {

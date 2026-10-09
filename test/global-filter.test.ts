@@ -99,12 +99,27 @@ function tableOf(entity: spi.Entity): Record<string, unknown> {
 }
 
 describe('createGlobalFilterManager', () => {
-  it('返回的是上游原生 FilterManager 实例', () => {
-    expect(createGlobalFilterManager(LISTED)).toBeInstanceOf(FilterManager)
+  it('返回的是上游原生 FilterManager 实例', async () => {
+    expect(await createGlobalFilterManager(LISTED)).toBeInstanceOf(FilterManager)
   })
 
-  it('只为拥有该列的模型注册：缺列模型的 getFilters 是空数组', () => {
-    const manager = createGlobalFilterManager([ORDER, AUDIT])
+  it('可以直接接受 EntityManager，无需手写模型清单', async () => {
+    const entityManager = EntityManager.combine(
+      EntityManager.combine(ORDER as never, AUDIT as never),
+      CHILD as never,
+    )
+    const manager = await createGlobalFilterManager(entityManager)
+    manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
+
+    const client = clientWith(manager)
+    expect(filtersOf(client, entityOf(ORDER))).toHaveLength(1)
+    // entities() 已经包含继承链；子模型由祖先贡献，不会重复
+    expect(filtersOf(client, entityOf(CHILD))).toHaveLength(1)
+    expect(filtersOf(client, entityOf(AUDIT))).toHaveLength(0)
+  })
+
+  it('只为拥有该列的模型注册：缺列模型的 getFilters 是空数组', async () => {
+    const manager = await createGlobalFilterManager([ORDER, AUDIT])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
 
     const client = clientWith(manager)
@@ -114,15 +129,15 @@ describe('createGlobalFilterManager', () => {
     expect(filtersOf(client, entityOf(AUDIT))).toHaveLength(0)
   })
 
-  it('继承来的列也算拥有该列', () => {
-    const manager = createGlobalFilterManager([CHILD])
+  it('继承来的列也算拥有该列', async () => {
+    const manager = await createGlobalFilterManager([CHILD])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
 
     expect(filtersOf(clientWith(manager), entityOf(CHILD))).toHaveLength(1)
   })
 
-  it('addGlobal 对所有列出的模型生效', () => {
-    const manager = createGlobalFilterManager([ORDER, AUDIT])
+  it('addGlobal 对所有列出的模型生效', async () => {
+    const manager = await createGlobalFilterManager([ORDER, AUDIT])
     manager.addGlobal(() => undefined)
 
     const client = clientWith(manager)
@@ -130,8 +145,8 @@ describe('createGlobalFilterManager', () => {
     expect(filtersOf(client, entityOf(AUDIT))).toHaveLength(1)
   })
 
-  it('过滤器执行时缺列返回 undefined（上游会忽略），不抛错', () => {
-    const manager = createGlobalFilterManager([ORDER, AUDIT])
+  it('过滤器执行时缺列返回 undefined（上游会忽略），不抛错', async () => {
+    const manager = await createGlobalFilterManager([ORDER, AUDIT])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
 
     const filter = manager.globalFilters[0] as (table: unknown) => unknown
@@ -139,8 +154,8 @@ describe('createGlobalFilterManager', () => {
     expect(filter(tableOf(entityOf(AUDIT)))).toBeUndefined()
   })
 
-  it('经 filterManager 选项传递时被上游原样保留（不被 merge 浅拷贝破坏）', () => {
-    const manager = createGlobalFilterManager([ORDER])
+  it('经 filterManager 选项传递时被上游原样保留（不被 merge 浅拷贝破坏）', async () => {
+    const manager = await createGlobalFilterManager([ORDER])
     const client = clientWith(manager)
 
     // 上游 merge() 只对白名单构造器（FilterManager / EntityManager）原样放行，
@@ -149,23 +164,23 @@ describe('createGlobalFilterManager', () => {
     expect(options.filterManager).toBe(manager)
   })
 
-  it('派生客户端自动继承（实例在 options 里传递）', () => {
-    const manager = createGlobalFilterManager([ORDER])
+  it('派生客户端自动继承（实例在 options 里传递）', async () => {
+    const manager = await createGlobalFilterManager([ORDER])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
 
     const base = clientWith(manager)
     expect(filtersOf(newSqlClient(base, {}), entityOf(ORDER))).toHaveLength(1)
   })
 
-  it('未列入 models 且无适用祖先的模型不会被过滤', () => {
-    const manager = createGlobalFilterManager([ORDER])
+  it('未列入 models 且无适用祖先的模型不会被过滤', async () => {
+    const manager = await createGlobalFilterManager([ORDER])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
 
     expect(filtersOf(clientWith(manager), entityOf(UNLISTED))).toHaveLength(0)
   })
 
-  it('父子同时列入时不会重复注册（上游会沿 superEntity 链收集）', () => {
-    const manager = createGlobalFilterManager([PARENT, CHILD])
+  it('父子同时列入时不会重复注册（上游会沿 superEntity 链收集）', async () => {
+    const manager = await createGlobalFilterManager([PARENT, CHILD])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(7))
 
     const client = clientWith(manager)
@@ -174,15 +189,15 @@ describe('createGlobalFilterManager', () => {
     expect(filtersOf(client, entityOf(CHILD))).toHaveLength(1)
   })
 
-  it('未列入清单的子模型仍会通过继承链拿到祖先的过滤器', () => {
-    const manager = createGlobalFilterManager([PARENT])
+  it('未列入清单的子模型仍会通过继承链拿到祖先的过滤器', async () => {
+    const manager = await createGlobalFilterManager([PARENT])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(7))
 
     expect(filtersOf(clientWith(manager), entityOf(CHILD))).toHaveLength(1)
   })
 
-  it('只存在于子模型的列仍由子模型自己注册', () => {
-    const manager = createGlobalFilterManager([PARENT, CHILD])
+  it('只存在于子模型的列仍由子模型自己注册', async () => {
+    const manager = await createGlobalFilterManager([PARENT, CHILD])
     manager.addGlobalFor<StrExpression<string>>('name', (t) => t.eq('x'))
 
     const client = clientWith(manager)
@@ -190,15 +205,15 @@ describe('createGlobalFilterManager', () => {
     expect(filtersOf(client, entityOf(PARENT))).toHaveLength(0)
   })
 
-  it('同一模型重复传入只注册一次', () => {
-    const manager = createGlobalFilterManager([ORDER, ORDER])
+  it('同一模型重复传入只注册一次', async () => {
+    const manager = await createGlobalFilterManager([ORDER, ORDER])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
 
     expect(filtersOf(clientWith(manager), entityOf(ORDER))).toHaveLength(1)
   })
 
-  it('unknownColumns 报出拼错的列名，继承列不算未知', () => {
-    const manager = createGlobalFilterManager([ORDER])
+  it('unknownColumns 报出拼错的列名，继承列不算未知', async () => {
+    const manager = await createGlobalFilterManager([ORDER])
     manager.addGlobalFor('tenantId', () => undefined)
     manager.addGlobalFor('tenandId', () => undefined)
 
@@ -206,8 +221,8 @@ describe('createGlobalFilterManager', () => {
     expect(manager.unknownColumns([CHILD as never])).toEqual(['tenandId'])
   })
 
-  it('globalFilters 返回快照，外部修改不影响内部', () => {
-    const manager = createGlobalFilterManager([ORDER])
+  it('globalFilters 返回快照，外部修改不影响内部', async () => {
+    const manager = await createGlobalFilterManager([ORDER])
     manager.addGlobal(() => undefined)
 
     const snapshot = manager.globalFilters as GlobalFilter[]
