@@ -106,6 +106,36 @@ discriminates on the ts-grm node marker `__type().expressionLike` rather than
 > but not enforced. The patch therefore leads with the column-level declaration
 > and keeps the branch above purely forward compatible.
 
+## Global filters
+
+`createGlobalFilterManager()` builds a `FilterManager` that applies a filter to **every**
+model, with no need to register them one by one:
+
+```ts
+import { createGlobalFilterManager } from 'ts-grm-patches'
+import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
+
+const filterManager = createGlobalFilterManager()
+filterManager.addGlobal((table) => table.tenantId.eq(currentTenantId))
+
+const client = newSqlClient(new PostgresDriver(pool), { entityManager, filterManager })
+```
+
+- Upstream's `FilterManager.add(model, filter)` is bound to one model; global filters
+  require no enumeration — the lookup is proxied, so any entity receives them, including
+  models you never registered.
+- Global filters are applied **before** per-model filters, and all filters are combined
+  with `AND` upstream; `add(model, filter)` keeps working as before.
+- Inside a filter, `table.__entity` exposes the current `spi.Entity`, so a global filter
+  can scope itself to — or exclude — specific models.
+- The filter is typed against `AnyModel`, so field access inside it is **not** verified at
+  compile time: a typo surfaces when the query is generated, not when you write it.
+- **Register before creating the client.** The client snapshots the filter manager during
+  construction, so filters added afterwards have no effect.
+- This rides the same private `_toMap()` channel that the upstream package already calls
+  through `as any` from its client implementation. That is an internal contract: an
+  upstream refactor could break it.
+
 ## Data flow
 
 The patch does not hook the schema-build pipeline; it rides the existing data
@@ -136,6 +166,11 @@ never overwrites.
 - `ColumnDefaultValue` — `ColumnDefaultLiteral | ColumnDefaultExpression`.
 - `ColumnPatchData` — the fields the patch attaches to `__PropData`.
 - `PatchedEntityProp` — `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`.
+- `createGlobalFilterManager(): GlobalFilterManager` — a `FilterManager` that applies
+  filters to every model.
+- `GlobalFilterManager` — upstream `FilterManager` plus `addGlobal(filter)` and
+  `globalFilters`.
+- `GlobalFilter` — an upstream `AnyFilter`.
 
 ### Consuming from a migration engine
 
@@ -155,6 +190,8 @@ if (isColumnDefaultExpression(d)) {
 - The patch extends prototypes of classes from `@ts-grm/core`. If two copies of
   the upstream package (ESM and CJS) are loaded in one process, only one of them
   gets patched. The expression discriminator above avoids this pitfall.
+- `createGlobalFilterManager()` must register its filters before `newSqlClient()`,
+  and rides an upstream-private channel (see Global filters).
 
 ## Development
 
