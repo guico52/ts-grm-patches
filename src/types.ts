@@ -17,8 +17,15 @@ export type ColumnDefaultLiteral = string | number | boolean | bigint | Date
  */
 export type ColumnDefaultExpression = ExpressionLike
 
-/** 列的默认值：字面量或 SQL 表达式。 */
-export type ColumnDefaultValue = ColumnDefaultLiteral | ColumnDefaultExpression
+/**
+ * 列的默认值。
+ *
+ * 声明侧由 `default(value: T | ...)` 保证与列类型一致；这里则必须覆盖 `T` 可能取到的
+ * 全部形状，否则消费方按公开类型处理时会遇到类型未涵盖的合法输入：
+ * 标量（含 `Date`）、数组（`prop.enumSet`）、对象（`prop.json` / 自定义标量），
+ * 以及上游的表达式节点。
+ */
+export type ColumnDefaultValue = ColumnDefaultLiteral | ColumnDefaultExpression | object
 
 /**
  * 补丁附加在 prop 定义数据（上游 `__PropData`）上的字段。

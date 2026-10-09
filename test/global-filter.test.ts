@@ -1,4 +1,11 @@
-import { EntityManager, model, prop, spi } from '@ts-grm/core'
+import {
+  DISCRIMINATOR_VALUE_MODEL_NAME,
+  EntityManager,
+  TABLE_INHERIT,
+  model,
+  prop,
+  spi,
+} from '@ts-grm/core'
 import type { NumExpression, SqlClient } from '@ts-grm/core'
 import { FilterManager, newSqlClient, PostgresDriver } from '@ts-grm/sql'
 import { describe, expect, it } from 'vitest'
@@ -23,13 +30,40 @@ const AUDIT = model(
   },
 )
 
+// 子模型自身不声明 tenantId，它是从父模型继承来的。
+const PARENT = model(
+  'GfBase',
+  'id',
+  class {
+    id = prop.i32()
+    tenantId = prop.i32()
+  },
+  // 有派生模型时，父模型也需要声明 discriminator
+  (ctx) => {
+    ctx.table({ discriminator: 'TYPE', discriminatorValue: DISCRIMINATOR_VALUE_MODEL_NAME })
+  },
+)
+
+const CHILD = model.extends(PARENT)(
+  'GfChild',
+  class {
+    name = prop.str(20)
+  },
+  (ctx) => {
+    ctx.table({ name: TABLE_INHERIT, discriminatorValue: DISCRIMINATOR_VALUE_MODEL_NAME })
+  },
+)
+
 function entityOf(target: unknown): spi.Entity {
   return spi.Entity.of(target as never)
 }
 
 function clientWith(filterManager?: FilterManager): SqlClient {
   return newSqlClient(new PostgresDriver({} as never), {
-    entityManager: EntityManager.combine(ORDER as never, AUDIT as never),
+    entityManager: EntityManager.combine(
+      EntityManager.combine(ORDER as never, AUDIT as never),
+      CHILD as never,
+    ),
     ...(filterManager == null ? {} : { filterManager }),
   })
 }
@@ -200,6 +234,28 @@ describe('installGlobalFilters', () => {
     manager.addGlobalFor('tenandId', () => undefined)
 
     expect(manager.unknownColumns([ORDER as never, AUDIT as never])).toEqual(['tenandId'])
+  })
+
+  it('继承来的列同样视为适用，且不被 unknownColumns 误报', () => {
+    const client = clientWith()
+    const manager = installGlobalFilters(client)
+    manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
+    manager.addGlobalFor('tenandId', () => undefined)
+
+    // CHILD 自身不声明 tenantId，是从 PARENT 继承的 —— 规则必须与适用性一致
+    expect(filtersOf(client, entityOf(CHILD))).toHaveLength(1)
+    expect(manager.unknownColumns([CHILD as never])).toEqual(['tenandId'])
+    expect(manager.unknownColumns([PARENT as never])).toEqual(['tenandId'])
+  })
+
+  it('已安装的 client 收到不同的 manager 时明确报错，相同或省略则幂等', () => {
+    const client = clientWith()
+    const installed = installGlobalFilters(client)
+    const other = installGlobalFilters(clientWith())
+
+    expect(() => installGlobalFilters(client, other)).toThrow(/already has a different manager/)
+    expect(installGlobalFilters(client)).toBe(installed)
+    expect(installGlobalFilters(client, installed)).toBe(installed)
   })
 
   it('对照组：直接访问缺失的列会抛错 —— 这正是 addGlobalFor 要防的', () => {

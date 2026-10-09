@@ -136,8 +136,9 @@ function createManager(): GlobalFilterManager {
       return state.compiled.map((c) => c.filter)
     },
     unknownColumns(models: ReadonlyArray<AnyModel>) {
+      // 与适用性判断使用同一规则（都走 hasColumn），否则继承来的属性会被误报
       return state.columns.filter(
-        (column) => !models.some((m) => spi.Entity.of(m as never).declaredPropMap.has(column)),
+        (column) => !models.some((m) => hasColumn(spi.Entity.of(m as never), column)),
       )
     },
   }
@@ -190,6 +191,12 @@ export function installGlobalFilters(
 ): GlobalFilterManager {
   const existing = managerByClient.get(client)
   if (existing != null) {
+    if (manager != null && manager !== existing) {
+      throw new Error(
+        'installGlobalFilters(): this client already has a different manager installed; ' +
+          'pass that manager or omit the argument.',
+      )
+    }
     return existing
   }
 

@@ -28,6 +28,11 @@ describe('column default', () => {
     expect(propData(prop.dt().default(instant)).default).toBe(instant)
   })
 
+  it('接受数组（prop.enumSet），元数据类型也涵盖它', () => {
+    const patched = prop.enumSet('A', 'B').default(['A'])
+    expect(propData(patched).default).toEqual(['A'])
+  })
+
   it('字面量与表达式都可与 autoIncrement 链式组合', () => {
     const patched = prop.i32().autoIncrement().default(0)
     expect(propData(patched).autoIncrement).toBe(true)
