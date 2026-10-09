@@ -23,6 +23,11 @@ describe('column default', () => {
     expect(propData(prop.dt().default(now)).default).toBe(now)
   })
 
+  it('接受 Date 字面量（prop.dt() 的值类型），并原样带到元数据', () => {
+    const instant = new Date('2026-01-01T00:00:00Z')
+    expect(propData(prop.dt().default(instant)).default).toBe(instant)
+  })
+
   it('字面量与表达式都可与 autoIncrement 链式组合', () => {
     const patched = prop.i32().autoIncrement().default(0)
     expect(propData(patched).autoIncrement).toBe(true)

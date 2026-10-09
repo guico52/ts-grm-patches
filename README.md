@@ -135,6 +135,17 @@ globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(curren
   and `table.someColumn.eq(...)` throws a `TypeError` that aborts the whole query. Prefer
   `addGlobalFor(column, build)`, which skips such models, or guard it yourself with
   `(table) => table.tenantId?.eq(id)`.
+- `addGlobalFor` also filters at **lookup** time: an entity lacking the column gets an empty
+  filter list. That matters beyond correctness — upstream decides whether an association may
+  read the foreign key directly from `getFilters(entity).length === 0`
+  (`association_resolver.ts`), so a non-empty list falls back to a join and can change the
+  result set for nullable associations. Plain `addGlobal()` cannot know applicability, so it
+  makes that list non-empty for every entity and gives up that optimization.
+- Installation is idempotent per client. `newSqlClient(client, options)` builds a **new**
+  instance that does not inherit the wrapper — call
+  `installGlobalFilters(derived, manager)` to share one manager across clients.
+- `manager.unknownColumns(models)` lists column names that no given model declares, catching
+  typos that would otherwise make a filter silently never apply.
 - Inside a filter, `table.__entity` exposes the current `spi.Entity`, so a global filter
   can scope itself to — or exclude — specific models.
 - The filter is typed against `AnyModel`, so field access inside it is **not** verified at
@@ -167,7 +178,7 @@ never overwrites.
   `model(...)` definition.
 - `isColumnDefaultExpression(value: unknown): value is ColumnDefaultExpression` —
   `true` when the default is a SQL expression node rather than a literal.
-- `ColumnDefaultLiteral` — `string | number | boolean | bigint`.
+- `ColumnDefaultLiteral` — `string | number | boolean | bigint | Date`.
 - `ColumnDefaultExpression` — upstream expression node (`ExpressionLike`).
 - `ColumnDefaultValue` — `ColumnDefaultLiteral | ColumnDefaultExpression`.
 - `ColumnPatchData` — the fields the patch attaches to `__PropData`.
@@ -175,7 +186,8 @@ never overwrites.
 - `installGlobalFilters(client): GlobalFilterManager` — makes an existing client apply
   filters to every model.
 - `GlobalFilterManager` — `addGlobal(filter)` (applies to every model),
-  `addGlobalFor(column, build)` (skips models lacking that column), and `globalFilters`.
+  `addGlobalFor(column, build)` (skips models lacking that column), `unknownColumns(models)`,
+  and `globalFilters`.
 - `GlobalFilter` — an upstream `AnyFilter`.
 
 ### Consuming from a migration engine
