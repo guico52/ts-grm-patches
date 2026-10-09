@@ -79,8 +79,10 @@ function entityHasColumn(entity: spi.Entity, column: string): boolean {
  * 代价与边界：
  *
  * - 与上游一致，过滤器在客户端构造时被快照，因此要在 `newSqlClient()` **之前**注册完毕；
- * - 传 `EntityManager` 时涵盖其中**所有**模型；不在其中的模型本身不会被注册，但若它的
- *   某个祖先在集合中且适用，它仍会通过上游的继承链拿到该过滤器。
+ * - 传 `EntityManager` 时涵盖其中**所有**模型 —— 注意 `combine()` 只给出显式传入的部分，
+ *   而 `of(baseDir, paths)` 枚举的是进程内**全部已注册模型**（其 `paths` 只负责触发模块
+ *   加载）。不在集合中的模型本身不会被注册，但若它的某个祖先在集合中且适用，它仍会通过
+ *   上游的继承链拿到该过滤器。
  */
 export async function createGlobalFilterManager(
   source: EntityManager | ReadonlyArray<AnyModel>,

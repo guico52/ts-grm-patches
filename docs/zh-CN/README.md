@@ -140,6 +140,9 @@ const client = newSqlClient(new PostgresDriver(pool), {
   未列入 `models` 的模型**本身**不会注册过滤器；但若它的某个祖先在清单中且适用，
   它仍会通过上游沿 `superEntity` 链的收集拿到该过滤器。只存在于子模型的列，
   则由该子模型自己注册。
+- 模型的来源会影响范围：`EntityManager.combine(...)` 只会给出显式传入的部分（外加其关联），
+  而 `EntityManager.of(baseDir, paths)` 枚举的是**进程内所有已注册模型** —— 它的 `paths`
+  只负责触发模块加载，因此传 `of(...)` 的管理器会涵盖比那些文件更多的模型。
 - 按列过滤请优先用 `addGlobalFor(column, build)`（缺少该列的模型根本不会注册，也不会抛错），
   而不是自行写 `table.someColumn.eq(...)` —— 后者在缺列模型上会抛 `TypeError`。
 - `manager.unknownColumns(models)` 列出给定模型中都不存在的列名；继承来的列算存在，

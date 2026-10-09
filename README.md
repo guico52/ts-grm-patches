@@ -170,6 +170,10 @@ field. An explicit model array works too.
   covers its descendants, while a column that only exists on the subclass is registered on the
   subclass itself. A model that is not listed can still receive a filter through that same
   chain.
+- Where the models come from matters: `EntityManager.combine(...)` yields exactly the parts
+  you pass (plus their associations), while `EntityManager.of(baseDir, paths)` enumerates
+  **every model registered in the process** — its `paths` only trigger module loading, so an
+  `of(...)` manager covers more than those files.
 - `manager.unknownColumns(models)` lists column names that no given model has — inherited
   columns count as present, matching how applicability is decided — catching typos that would
   otherwise make a filter silently never apply.
