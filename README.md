@@ -108,28 +108,32 @@ discriminates on the ts-grm node marker `__type().expressionLike` rather than
 
 ## Global filters
 
-`installGlobalFilters(client)` makes an existing client apply filters to **every** model,
-with no need to register them one by one:
+`createGlobalFilterManager(models)` returns a **native upstream `FilterManager`** that
+registers your filters on each listed model. Pass it straight to `newSqlClient`:
 
 ```ts
-import { installGlobalFilters } from 'ts-grm-patches'
+import { createGlobalFilterManager } from 'ts-grm-patches'
 import type { NumExpression } from '@ts-grm/core'
 import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
 
-const client = newSqlClient(new PostgresDriver(pool), { entityManager })
-
-const globalFilters = installGlobalFilters(client)
-// applies only to models that actually have the column; others are skipped
-// (use addGlobal() with your own guard if you need full control)
+const globalFilters = createGlobalFilterManager([ORDER, CUSTOMER])
+// registers only on models that actually have the column
 globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(currentTenantId))
+
+const client = newSqlClient(new PostgresDriver(pool), {
+  entityManager,
+  filterManager: globalFilters,
+})
 ```
 
-- Upstream's `FilterManager.add(model, filter)` is bound to one model; global filters
-  require no enumeration — any entity receives them, including models you never registered.
+- It **is** a `FilterManager`: no wrapping, no private members, no patching. Upstream's
+  `merge()` passes an options value through untouched only when its constructor is exactly
+  `FilterManager` (or `EntityManager`) — subclassing it, or passing any other object, gets
+  shallow-copied and loses its prototype.
 - Applied **before** per-model filters; all filters are combined with `AND` upstream, and
   `add(model, filter)` keeps working as before.
-- Registration takes effect **immediately** — unlike upstream's `filterManager` option,
-  which is snapshotted when the client is constructed.
+- `newSqlClient(client, options)` derives a client that **inherits** the manager, because it
+  travels inside `options`.
 - **Not every model has the column you filter on.** Upstream builds each table class from
   the entity's declared props, so on a model lacking that column the property is `undefined`
   and `table.someColumn.eq(...)` throws a `TypeError` that aborts the whole query. Prefer
@@ -140,21 +144,14 @@ globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(curren
   read the foreign key directly from `getFilters(entity).length === 0`
   (`association_resolver.ts`), so a non-empty list falls back to a join and can change the
   result set for nullable associations. Plain `addGlobal()` cannot know applicability, so it
-  makes that list non-empty for every entity and gives up that optimization.
-- Installation is idempotent per client: re-installing with no argument (or with the same
-  manager) returns the installed one, while passing a **different** manager throws instead of
-  being silently ignored. `newSqlClient(client, options)` builds a **new** instance that does
-  not inherit the wrapper — call `installGlobalFilters(derived, manager)` to share one manager
-  across clients.
+  makes that list non-empty for every listed model and gives up that optimization.
+- Upstream snapshots the filter list when the client is built: register before
+  `newSqlClient()`. Models not listed in `models` are never filtered.
 - `manager.unknownColumns(models)` lists column names that no given model has — inherited
   columns count as present, matching how applicability is decided — catching typos that would
   otherwise make a filter silently never apply.
 - Inside a filter, `table.__entity` exposes the current `spi.Entity`, so a global filter
   can scope itself to — or exclude — specific models.
-- The filter is typed against `AnyModel`, so field access inside it is **not** verified at
-  compile time: a typo surfaces when the query is generated, not when you write it.
-- Built on the public `getFilters(entity)` member of `SqlClientImplementor`; if a client
-  does not expose it, `installGlobalFilters` throws rather than failing silently.
 
 ## Data flow
 
@@ -187,11 +184,11 @@ never overwrites.
   (arrays from `prop.enumSet`, objects from `prop.json`, custom scalars).
 - `ColumnPatchData` — the fields the patch attaches to `__PropData`.
 - `PatchedEntityProp` — `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`.
-- `installGlobalFilters(client): GlobalFilterManager` — makes an existing client apply
-  filters to every model.
-- `GlobalFilterManager` — `addGlobal(filter)` (applies to every model),
-  `addGlobalFor(column, build)` (skips models lacking that column), `unknownColumns(models)`,
-  and `globalFilters`.
+- `createGlobalFilterManager(models): GlobalFilterManager` — a native `FilterManager` with
+  the listed models pre-registered.
+- `GlobalFilterManager` — upstream `FilterManager` plus `addGlobal(filter)` (every listed
+  model), `addGlobalFor(column, build)` (only models having that column),
+  `unknownColumns(models)`, and `globalFilters`.
 - `GlobalFilter` — an upstream `AnyFilter`.
 
 ### Consuming from a migration engine
@@ -212,9 +209,8 @@ if (isColumnDefaultExpression(d)) {
 - The patch extends prototypes of classes from `@ts-grm/core`. If two copies of
   the upstream package (ESM and CJS) are loaded in one process, only one of them
   gets patched. The expression discriminator above avoids this pitfall.
-- `installGlobalFilters()` relies on the `getFilters` member of `SqlClientImplementor`
-  (see Global filters). That member is part of the upstream public surface, so removing
-  or renaming it upstream would be a breaking change.
+- `createGlobalFilterManager()` needs the model list up front, and — like upstream — the
+  filters are snapshotted when the client is constructed (see Global filters).
 
 ## Development
 
