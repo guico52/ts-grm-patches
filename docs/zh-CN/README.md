@@ -49,11 +49,18 @@ const USER = model(
 )
 ```
 
-两个修饰符都返回**新实例**（与上游 `nullable()` 同构），可自由链式组合，且不会污染原 prop：
+两个修饰符都返回**新实例**（与上游 `nullable()` 同构），且不会污染原 prop：
 
 ```ts
-const id = prop.i32().autoIncrement().default(0)
+// 自增 id：值由数据库生成
+const id = prop.i32().autoIncrement()
+
+// 列默认值：未提供值时的取值
+const status = prop.str(20).default('active')
 ```
+
+它们和其他修饰符一样可以链式调用，但这两者通常不该放在一起 —— 自增列的值由数据库生成，
+再给它一个字面默认值一般不是你想要的结果。
 
 ### 默认值：字面量或 SQL 表达式
 

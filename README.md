@@ -56,12 +56,20 @@ const USER = model(
 )
 ```
 
-Both modifiers return a **new instance**, mirroring upstream `nullable()`. They
-chain freely and never mutate the original prop:
+Both modifiers return a **new instance**, mirroring upstream `nullable()`, and never
+mutate the original prop:
 
 ```ts
-const id = prop.i32().autoIncrement().default(0)
+// a self-incrementing id: the value comes from the database
+const id = prop.i32().autoIncrement()
+
+// a column default: the value used when none is supplied
+const status = prop.str(20).default('active')
 ```
+
+They can be chained like any other modifier, but the two rarely belong together — a
+self-incrementing column takes its value from the database, so giving it a literal default
+is usually not what you want.
 
 ### Defaults: literals or SQL expressions
 
