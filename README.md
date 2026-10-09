@@ -121,15 +121,16 @@ discriminates on the ts-grm node marker `__type().expressionLike` rather than
 
 ## Global filters
 
-`createGlobalFilterManager(models)` returns a **native upstream `FilterManager`** that
-registers your filters on each listed model. Pass it straight to `newSqlClient`:
+`createGlobalFilterManager(source)` returns a **native upstream `FilterManager`** that
+registers your filters on the target models. Pass it straight to `newSqlClient`:
 
 ```ts
 import { createGlobalFilterManager } from 'ts-grm-patches'
 import type { NumExpression } from '@ts-grm/core'
 import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
 
-const globalFilters = createGlobalFilterManager([ORDER, CUSTOMER])
+// an EntityManager is enough — no need to list the models by hand
+const globalFilters = await createGlobalFilterManager(entityManager)
 // registers only on models that actually have the column
 globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(currentTenantId))
 
@@ -138,6 +139,10 @@ const client = newSqlClient(new PostgresDriver(pool), {
   filterManager: globalFilters,
 })
 ```
+
+It is async because it takes the models from `EntityManager.entities()` — upstream's own
+enumeration, which already covers the inheritance chain — via the public `Entity.model`
+field. An explicit model array works too.
 
 - It **is** a `FilterManager`: no wrapping, no private members, no patching. Upstream's
   `merge()` passes an options value through untouched only when its constructor is exactly
@@ -202,8 +207,8 @@ never overwrites.
   (arrays from `prop.enumSet`, objects from `prop.json`, custom scalars).
 - `ColumnPatchData` — the fields the patch attaches to `__PropData`.
 - `PatchedEntityProp` — `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`.
-- `createGlobalFilterManager(models): GlobalFilterManager` — a native `FilterManager` with
-  the listed models pre-registered.
+- `createGlobalFilterManager(source: EntityManager | AnyModel[]): Promise<GlobalFilterManager>`
+  — a native `FilterManager` with the target models pre-registered.
 - `GlobalFilterManager` — upstream `FilterManager` plus `addGlobal(filter)` (every listed
   model), `addGlobalFor(column, build)` (only models having that column),
   `unknownColumns(models)`, and `globalFilters`.
@@ -229,8 +234,9 @@ if (isColumnDefaultExpression(d)) {
 - The patch extends prototypes of classes from `@ts-grm/core`. If two copies of
   the upstream package (ESM and CJS) are loaded in one process, only one of them
   gets patched. The expression discriminator above avoids this pitfall.
-- `createGlobalFilterManager()` needs the model list up front, and — like upstream — the
-  filters are snapshotted when the client is constructed (see Global filters).
+- `createGlobalFilterManager()` is async (it takes the models from an `EntityManager`), and —
+  like upstream — the filters are snapshotted when the client is constructed (see Global
+  filters).
 
 ## Development
 

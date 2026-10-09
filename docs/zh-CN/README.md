@@ -104,15 +104,16 @@ columnDef.prop?.default // 字面量或表达式节点，或 undefined
 
 ## 全局过滤器
 
-`createGlobalFilterManager(models)` 返回一个**上游原生 `FilterManager`**，它把过滤器注册到
-清单里的每个模型上，直接交给 `newSqlClient`：
+`createGlobalFilterManager(source)` 返回一个**上游原生 `FilterManager`**，它把过滤器注册到
+目标模型上，直接交给 `newSqlClient`：
 
 ```ts
 import { createGlobalFilterManager } from 'ts-grm-patches'
 import type { NumExpression } from '@ts-grm/core'
 import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
 
-const globalFilters = createGlobalFilterManager([ORDER, CUSTOMER])
+// 给一个 EntityManager 就够了，不必手写模型清单
+const globalFilters = await createGlobalFilterManager(entityManager)
 // 只注册到真正拥有该列的模型上
 globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(currentTenantId))
 
@@ -121,6 +122,9 @@ const client = newSqlClient(new PostgresDriver(pool), {
   filterManager: globalFilters,
 })
 ```
+
+它之所以是异步的，是因为模型取自 `EntityManager.entities()` —— 上游自己的枚举已经涵盖
+继承链 —— 再通过公开的 `Entity.model` 取回。也仍然接受模型数组。
 
 - 它**就是** `FilterManager`：无包装、无私有成员、无补丁。上游的 `merge()` 只对构造器恰好
   是 `FilterManager`（或 `EntityManager`）的选项值原样放行 —— 继承它，或传入其他对象，
@@ -171,8 +175,8 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
   （`prop.enumSet` 的数组、`prop.json` 的对象、自定义标量）。
 - `ColumnPatchData` —— 补丁附加在 `__PropData` 上的字段。
 - `PatchedEntityProp` —— `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`。
-- `createGlobalFilterManager(models): GlobalFilterManager` —— 一个已把清单中模型注册好的
-  原生 `FilterManager`。
+- `createGlobalFilterManager(source: EntityManager | AnyModel[]): Promise<GlobalFilterManager>`
+  —— 一个已把目标模型注册好的原生 `FilterManager`。
 - `GlobalFilterManager` —— 上游 `FilterManager` 加上 `addGlobal(filter)`（清单中所有模型）、
   `addGlobalFor(column, build)`（仅拥有该列的模型）、`unknownColumns(models)` 与 `globalFilters`。
 - `GlobalFilter` —— 上游的 `AnyFilter`。
@@ -196,8 +200,8 @@ if (isColumnDefaultExpression(d)) {
 - 必须在定义任何 `model(...)` **之前**调用 `applyPatches()`。
 - 补丁作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
   补丁只作用于其中一份。上面的表达式判别函数已避开这个坑。
-- `createGlobalFilterManager()` 需要先提供模型清单；与上游一致，过滤器在客户端构造时被快照
-  （见「全局过滤器」）。
+- `createGlobalFilterManager()` 是异步的（模型取自 `EntityManager`）；与上游一致，过滤器在
+  客户端构造时被快照（见「全局过滤器」）。
 
 ## 开发
 

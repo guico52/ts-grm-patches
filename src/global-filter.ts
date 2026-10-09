@@ -1,4 +1,4 @@
-import { spi } from '@ts-grm/core'
+import { type EntityManager, spi } from '@ts-grm/core'
 import type { AnyModel, Predicate } from '@ts-grm/core'
 import { FilterManager } from '@ts-grm/sql'
 import type { AnyFilter } from '@ts-grm/sql'
@@ -61,16 +61,20 @@ function entityHasColumn(entity: spi.Entity, column: string): boolean {
 }
 
 /**
- * 创建一个**原生 `FilterManager`**，它把过滤器注册到传入的每个模型上。
+ * 创建一个**原生 `FilterManager`**，它把过滤器注册到目标模型上。
  *
  * 直接作为 `newSqlClient` 的 `filterManager` 选项使用：
  *
  * ```ts
- * const globalFilters = createGlobalFilterManager([ORDER, CUSTOMER])
+ * const globalFilters = await createGlobalFilterManager(entityManager)
  * globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(tenantId))
  *
  * const client = newSqlClient(driver, { entityManager, filterManager: globalFilters })
  * ```
+ *
+ * 模型来自 `EntityManager` 时**不必手写清单** —— 上游的 `entities()` 已经沿继承链汇总了
+ * 全部相关实体（`_add` 会递归加入 `superEntity`），这里再用 `Entity.model` 取回模型。
+ * 因为那个方法异步，所以本函数也是异步的；同时仍接受模型数组。
  *
  * 相比「包装 `getFilters()`」，这种方式不触碰上游内部：
  *
@@ -82,12 +86,14 @@ function entityHasColumn(entity: spi.Entity, column: string): boolean {
  *
  * 代价与边界：
  *
- * - 需要提供模型清单；
  * - 与上游一致，过滤器在客户端构造时被快照，因此要在 `newSqlClient()` **之前**注册完毕；
- * - 未列入清单的模型本身不会被注册，但**若它的某个祖先在清单中且适用，它仍会通过
- *   上游的继承链拿到该过滤器**（上游行为，见下）。
+ * - 传 `EntityManager` 时涵盖其中**所有**模型；不在其中的模型本身不会被注册，但若它的
+ *   某个祖先在集合中且适用，它仍会通过上游的继承链拿到该过滤器。
  */
-export function createGlobalFilterManager(models: ReadonlyArray<AnyModel>): GlobalFilterManager {
+export async function createGlobalFilterManager(
+  source: EntityManager | ReadonlyArray<AnyModel>,
+): Promise<GlobalFilterManager> {
+  const models = await resolveModels(source)
   const manager = new FilterManager() as GlobalFilterManager
   const registered: GlobalFilter[] = []
   const knownColumns: string[] = []
@@ -169,4 +175,26 @@ export function createGlobalFilterManager(models: ReadonlyArray<AnyModel>): Glob
   })
 
   return manager
+}
+
+/**
+ * 把两种输入统一成模型数组。
+ *
+ * `EntityManager.entities()` 给出的是 `Entity`（且已包含继承链），而 `FilterManager.add()`
+ * 需要模型，所以用 `Entity.model` 取回 —— 该属性是上游的公开字段。
+ */
+async function resolveModels(
+  source: EntityManager | ReadonlyArray<AnyModel>,
+): Promise<ReadonlyArray<AnyModel>> {
+  if (isModelArray(source)) {
+    return source
+  }
+  const entities = await source.entities()
+  return [...entities].map((entity) => entity.model)
+}
+
+function isModelArray(
+  source: EntityManager | ReadonlyArray<AnyModel>,
+): source is ReadonlyArray<AnyModel> {
+  return Array.isArray(source)
 }
