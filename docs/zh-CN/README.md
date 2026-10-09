@@ -104,8 +104,9 @@ columnDef.prop?.default // 字面量或表达式节点，或 undefined
 
 ## 全局过滤器
 
-`createGlobalFilterManager(source)` 返回一个**上游原生 `FilterManager`**，它把过滤器注册到
-目标模型上，直接交给 `newSqlClient`：
+上游 ts-grm 自带的 `FilterManager` 是**按模型**注册的；本包提供的是「让同一个过滤器一次性覆盖
+多个模型」的辅助 —— `createGlobalFilterManager(source)` 返回一个**上游原生 `FilterManager`**，
+把过滤器注册到目标模型上，直接交给 `newSqlClient`：
 
 ```ts
 import { createGlobalFilterManager } from 'ts-grm-patches'

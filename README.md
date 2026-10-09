@@ -121,6 +121,8 @@ discriminates on the ts-grm node marker `__type().expressionLike` rather than
 
 ## Global filters
 
+Upstream `ts-grm` ships `FilterManager`, which registers filters **per model**. What this
+package adds is a way to apply one filter across many models at once —
 `createGlobalFilterManager(source)` returns a **native upstream `FilterManager`** that
 registers your filters on the target models. Pass it straight to `newSqlClient`:
 
