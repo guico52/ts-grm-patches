@@ -26,3 +26,6 @@ pnpm-debug.log*
 
 # agent / tooling state
 .codewhale/
+
+# stray file that is not part of this project (kept in the working tree, never committed)
+/mlcc-production.html
