@@ -130,8 +130,9 @@ const client = newSqlClient(new PostgresDriver(pool), {
   `merge()` passes an options value through untouched only when its constructor is exactly
   `FilterManager` (or `EntityManager`) — subclassing it, or passing any other object, gets
   shallow-copied and loses its prototype.
-- Applied **before** per-model filters; all filters are combined with `AND` upstream, and
-  `add(model, filter)` keeps working as before.
+- All filters are combined with `AND`, in **registration order**: filters added via
+  `add(model, filter)` and the global ones interleave exactly as they were registered, so there
+  is no "global filters first" guarantee.
 - `newSqlClient(client, options)` derives a client that **inherits** the manager, because it
   travels inside `options`.
 - **Not every model has the column you filter on.** Upstream builds each table class from
@@ -146,7 +147,11 @@ const client = newSqlClient(new PostgresDriver(pool), {
   result set for nullable associations. Plain `addGlobal()` cannot know applicability, so it
   makes that list non-empty for every listed model and gives up that optimization.
 - Upstream snapshots the filter list when the client is built: register before
-  `newSqlClient()`. Models not listed in `models` are never filtered.
+  `newSqlClient()`. A model is registered only if it is listed _and_ no listed ancestor
+  already applies — upstream collects along the `superEntity` chain, so a listed ancestor also
+  covers its descendants, while a column that only exists on the subclass is registered on the
+  subclass itself. A model that is not listed can still receive a filter through that same
+  chain.
 - `manager.unknownColumns(models)` lists column names that no given model has — inherited
   columns count as present, matching how applicability is decided — catching typos that would
   otherwise make a filter silently never apply.

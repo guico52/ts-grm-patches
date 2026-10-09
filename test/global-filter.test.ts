@@ -6,7 +6,7 @@ import {
   prop,
   spi,
 } from '@ts-grm/core'
-import type { NumExpression, SqlClient } from '@ts-grm/core'
+import type { NumExpression, SqlClient, StrExpression } from '@ts-grm/core'
 import { FilterManager, newSqlClient, PostgresDriver } from '@ts-grm/sql'
 import { describe, expect, it } from 'vitest'
 
@@ -72,8 +72,11 @@ function entityOf(target: unknown): spi.Entity {
 function clientWith(filterManager?: FilterManager): SqlClient {
   return newSqlClient(new PostgresDriver({} as never), {
     entityManager: EntityManager.combine(
-      EntityManager.combine(ORDER as never, AUDIT as never),
-      EntityManager.combine(CHILD as never, UNLISTED as never),
+      EntityManager.combine(
+        EntityManager.combine(ORDER as never, AUDIT as never),
+        EntityManager.combine(CHILD as never, UNLISTED as never),
+      ),
+      PARENT as never,
     ),
     ...(filterManager == null ? {} : { filterManager }),
   })
@@ -154,11 +157,37 @@ describe('createGlobalFilterManager', () => {
     expect(filtersOf(newSqlClient(base, {}), entityOf(ORDER))).toHaveLength(1)
   })
 
-  it('未列入 models 的模型不会被过滤（已知限制）', () => {
+  it('未列入 models 且无适用祖先的模型不会被过滤', () => {
     const manager = createGlobalFilterManager([ORDER])
     manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
 
     expect(filtersOf(clientWith(manager), entityOf(UNLISTED))).toHaveLength(0)
+  })
+
+  it('父子同时列入时不会重复注册（上游会沿 superEntity 链收集）', () => {
+    const manager = createGlobalFilterManager([PARENT, CHILD])
+    manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(7))
+
+    const client = clientWith(manager)
+    expect(filtersOf(client, entityOf(PARENT))).toHaveLength(1)
+    // 子模型的过滤器由祖先贡献，不能重复注册（否则条件会出现两次）
+    expect(filtersOf(client, entityOf(CHILD))).toHaveLength(1)
+  })
+
+  it('未列入清单的子模型仍会通过继承链拿到祖先的过滤器', () => {
+    const manager = createGlobalFilterManager([PARENT])
+    manager.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(7))
+
+    expect(filtersOf(clientWith(manager), entityOf(CHILD))).toHaveLength(1)
+  })
+
+  it('只存在于子模型的列仍由子模型自己注册', () => {
+    const manager = createGlobalFilterManager([PARENT, CHILD])
+    manager.addGlobalFor<StrExpression<string>>('name', (t) => t.eq('x'))
+
+    const client = clientWith(manager)
+    expect(filtersOf(client, entityOf(CHILD))).toHaveLength(1)
+    expect(filtersOf(client, entityOf(PARENT))).toHaveLength(0)
   })
 
   it('同一模型重复传入只注册一次', () => {
