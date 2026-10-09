@@ -1,5 +1,5 @@
 import { EntityManager, model, prop, spi } from '@ts-grm/core'
-import type { SqlClient } from '@ts-grm/core'
+import type { NumExpression, SqlClient } from '@ts-grm/core'
 import { FilterManager, newSqlClient, PostgresDriver } from '@ts-grm/sql'
 import { describe, expect, it } from 'vitest'
 
@@ -43,6 +43,19 @@ function filtersOf(client: SqlClient, entity: spi.Entity): ReadonlyArray<unknown
 
 /** 只用于计数、不对任何模型真正生效的过滤器。 */
 const noopFilter: GlobalFilter = () => undefined
+
+/**
+ * 构造上游在查询期真正传给过滤器的对象：table 类是按实体的声明属性逐个生成的
+ * （core 的 createEntityTableClass），所以不含该列的模型上属性就是 undefined。
+ */
+function tableOf(entity: spi.Entity): Record<string, unknown> {
+  const ctor = (
+    entity as unknown as {
+      tableClass(): new (e: spi.Entity, join: unknown) => Record<string, unknown>
+    }
+  ).tableClass()
+  return new ctor(entity, undefined)
+}
 
 describe('installGlobalFilters', () => {
   it('全局过滤器对所有模型生效，无需逐个登记', () => {
@@ -114,5 +127,23 @@ describe('installGlobalFilters', () => {
 
   it('client 不提供 getFilters 时明确报错，而不是静默失效', () => {
     expect(() => installGlobalFilters({} as never)).toThrow(/getFilters/)
+  })
+
+  it('addGlobalFor 只在模型拥有该列时应用，缺少该列的模型被跳过', () => {
+    const client = clientWith()
+    installGlobalFilters(client).addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(1))
+
+    const filter = filtersOf(client, entityOf(ORDER))[0] as (table: unknown) => unknown
+    expect(filter(tableOf(entityOf(ORDER)))).toBeDefined()
+    // 关键：跳过而不是抛错
+    expect(filter(tableOf(entityOf(AUDIT)))).toBeUndefined()
+  })
+
+  it('对照组：直接访问缺失的列会抛错 —— 这正是 addGlobalFor 要防的', () => {
+    const auditTable = tableOf(entityOf(AUDIT)) as {
+      tenantId?: { eq(value: number): unknown }
+    }
+    expect(auditTable.tenantId).toBeUndefined()
+    expect(() => auditTable.tenantId!.eq(1)).toThrow(TypeError)
   })
 })

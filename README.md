@@ -113,12 +113,15 @@ with no need to register them one by one:
 
 ```ts
 import { installGlobalFilters } from 'ts-grm-patches'
+import type { NumExpression } from '@ts-grm/core'
 import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
 
 const client = newSqlClient(new PostgresDriver(pool), { entityManager })
 
 const globalFilters = installGlobalFilters(client)
-globalFilters.addGlobal((table) => table.tenantId.eq(currentTenantId))
+// applies only to models that actually have the column; others are skipped
+// (use addGlobal() with your own guard if you need full control)
+globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(currentTenantId))
 ```
 
 - Upstream's `FilterManager.add(model, filter)` is bound to one model; global filters
@@ -127,6 +130,11 @@ globalFilters.addGlobal((table) => table.tenantId.eq(currentTenantId))
   `add(model, filter)` keeps working as before.
 - Registration takes effect **immediately** — unlike upstream's `filterManager` option,
   which is snapshotted when the client is constructed.
+- **Not every model has the column you filter on.** Upstream builds each table class from
+  the entity's declared props, so on a model lacking that column the property is `undefined`
+  and `table.someColumn.eq(...)` throws a `TypeError` that aborts the whole query. Prefer
+  `addGlobalFor(column, build)`, which skips such models, or guard it yourself with
+  `(table) => table.tenantId?.eq(id)`.
 - Inside a filter, `table.__entity` exposes the current `spi.Entity`, so a global filter
   can scope itself to — or exclude — specific models.
 - The filter is typed against `AnyModel`, so field access inside it is **not** verified at
@@ -166,7 +174,8 @@ never overwrites.
 - `PatchedEntityProp` — `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`.
 - `installGlobalFilters(client): GlobalFilterManager` — makes an existing client apply
   filters to every model.
-- `GlobalFilterManager` — `addGlobal(filter)` and `globalFilters`.
+- `GlobalFilterManager` — `addGlobal(filter)` (applies to every model),
+  `addGlobalFor(column, build)` (skips models lacking that column), and `globalFilters`.
 - `GlobalFilter` — an upstream `AnyFilter`.
 
 ### Consuming from a migration engine

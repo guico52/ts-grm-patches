@@ -97,18 +97,25 @@ column.prop?.default // 字面量或表达式节点，或 undefined
 
 ```ts
 import { installGlobalFilters } from 'ts-grm-patches'
+import type { NumExpression } from '@ts-grm/core'
 import { newSqlClient, PostgresDriver } from '@ts-grm/sql'
 
 const client = newSqlClient(new PostgresDriver(pool), { entityManager })
 
 const globalFilters = installGlobalFilters(client)
-globalFilters.addGlobal((table) => table.tenantId.eq(currentTenantId))
+// 只在真正拥有该列的模型上生效，其余模型自动跳过
+// （需要完全自控时用 addGlobal() 并自己判断列是否存在）
+globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(currentTenantId))
 ```
 
 - 上游的 `FilterManager.add(model, filter)` 绑定单个模型；全局过滤器**不需要枚举模型** ——
   任何实体（包括你从未注册过的模型）都会拿到它们。
 - 全局过滤器排在上游的模型级过滤器**之前**，全部过滤器在上游以 `AND` 组合，
   `add(model, filter)` 的用法不受影响。
+- **并非每个模型都有你过滤的那个列。** 上游的 table 类是按实体的声明属性逐个生成的，
+  缺少该列的模型上属性是 `undefined`，直接 `table.someColumn.eq(...)` 会抛 `TypeError`
+  并打断整个查询。请优先用 `addGlobalFor(column, build)`（缺少该列的模型自动跳过），
+  或自行判断：`(table) => table.tenantId?.eq(id)`。
 - 过滤器内部可通过 `table.__entity` 拿到当前的 `spi.Entity`，因此可以把全局过滤器限定到
   或排除掉特定模型。
 - 过滤器的类型参数是 `AnyModel`，因此其中的字段访问**不受编译期校验**：写错字段名要到
@@ -145,7 +152,8 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
 - `ColumnPatchData` —— 补丁附加在 `__PropData` 上的字段。
 - `PatchedEntityProp` —— `spi.EntityProp & { autoIncrement: boolean; default: ColumnDefaultValue | undefined }`。
 - `installGlobalFilters(client): GlobalFilterManager` —— 让一个已创建的 client 对所有模型生效。
-- `GlobalFilterManager` —— `addGlobal(filter)` 与 `globalFilters`。
+- `GlobalFilterManager` —— `addGlobal(filter)`（对所有模型生效）、
+  `addGlobalFor(column, build)`（缺少该列的模型自动跳过）与 `globalFilters`。
 - `GlobalFilter` —— 上游的 `AnyFilter`。
 
 ### 迁移引擎侧的消费方式

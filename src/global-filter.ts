@@ -1,4 +1,4 @@
-import type { SqlClient, spi } from '@ts-grm/core'
+import type { Predicate, SqlClient, spi } from '@ts-grm/core'
 import type { AnyFilter } from '@ts-grm/sql'
 
 /**
@@ -15,8 +15,29 @@ export interface GlobalFilterManager {
    *
    * 与上游在 client 构造时快照 `filterManager` 不同，这里注册后**立即生效**，
    * 不必赶在 `newSqlClient()` 之前。
+   *
+   * 注意：上游的 table 是按实体的声明属性逐个生成的，**不含该列的模型上属性为
+   * `undefined`**，直接 `table.xxx.eq(...)` 会抛 `TypeError` 并打断查询。
+   * 需要按列过滤时请优先使用 `addGlobalFor()`，或自行用可选链判断，
+   * 例如 `(table) => table.tenantId?.eq(id)`。
    */
   addGlobal(filter: GlobalFilter | undefined): this
+
+  /**
+   * 声明式注册：**只在模型确实拥有该列时**才应用过滤器。
+   *
+   * 适合「软删除」「多租户」这类需要覆盖所有模型、但各模型列不一定齐全的场景：
+   * 缺少该列的模型会被自动跳过（过滤器返回 `undefined`，上游会忽略它），
+   * 而不是抛错。
+   *
+   * ```ts
+   * globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(tenantId))
+   * ```
+   */
+  addGlobalFor<TColumn = unknown>(
+    column: string,
+    build: (column: TColumn) => Predicate | undefined,
+  ): this
 
   /** 已注册的全局过滤器（快照）。 */
   readonly globalFilters: ReadonlyArray<GlobalFilter>
@@ -67,6 +88,16 @@ export function installGlobalFilters(client: SqlClient): GlobalFilterManager {
         globalFilters.push(filter)
       }
       return this
+    },
+    addGlobalFor<TColumn>(column: string, build: (column: TColumn) => Predicate | undefined) {
+      return this.addGlobal((table) => {
+        const onTable = (table as unknown as Record<string, unknown>)[column]
+        if (onTable == null) {
+          // 该模型没有这一列：跳过而不是抛错
+          return undefined
+        }
+        return build(onTable as TColumn)
+      })
     },
     get globalFilters() {
       return [...globalFilters]
