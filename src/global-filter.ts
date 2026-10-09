@@ -41,23 +41,15 @@ export interface GlobalFilterManager extends FilterManager {
 }
 
 /**
- * 该模型的 table 上是否存在这一列。
+ * 该模型是否拥有该属性。
  *
- * 上游的 table 类是按实体的声明属性（含继承）生成的，所以用运行时真值判断。
+ * 用实体元数据（`allPropMap`，包含继承来的属性）判断 —— 与上游生成 table 字段的来源一致：
+ * 实测在普通属性、继承属性、embedded、关联及其自动外键上，它与 `column in table` 的结果
+ * 完全相同。相比构造 table 实例，这里不需要 try/catch：实体解析出问题时会直接暴露，
+ * 而不是被当成「没有这一列」。
  */
 function entityHasColumn(entity: spi.Entity, column: string): boolean {
-  try {
-    const ctor = (
-      entity as unknown as {
-        tableClass(): new (e: spi.Entity, join: unknown) => object
-      }
-    ).tableClass()
-    return column in new ctor(entity, undefined)
-  } catch {
-    // 判断不出来就不注册：注册了也不会真正生效（过滤器自身会返回 undefined），
-    // 却会让 getFilters() 非空，反而破坏上游对关联查询的优化判断。
-    return false
-  }
+  return entity.allPropMap.has(column)
 }
 
 /**
