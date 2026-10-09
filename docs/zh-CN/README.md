@@ -114,15 +114,17 @@ const client = newSqlClient(new PostgresDriver(pool), {
 - 它**就是** `FilterManager`：无包装、无私有成员、无补丁。上游的 `merge()` 只对构造器恰好
   是 `FilterManager`（或 `EntityManager`）的选项值原样放行 —— 继承它，或传入其他对象，
   都会被浅拷贝而**丢失原型**。
-- 全局过滤器排在上游的模型级过滤器**之前**，全部过滤器在上游以 `AND` 组合，
-  `add(model, filter)` 的用法不受影响。
+- 全部过滤器在上游以 `AND` 组合，顺序就是**注册顺序**：`add(model, filter)` 注册的
+  与全局过滤器按各自注册的先后交错，没有「全局过滤器优先」这回事。
 - `newSqlClient(client, options)` 派生的客户端会**自动继承**该管理器（实例在 `options` 里传递）。
 - `addGlobalFor` 还会在**查找阶段**筛选：缺少该列的实体拿到的是空列表。这不只是正确性问题
   —— 上游据 `getFilters(entity).length === 0` 判断关联能否直接读取外键
   （`association_resolver.ts`），非空列表会退化为 join，对可空关联可能改变结果集。
   自由形式的 `addGlobal()` 无法预知适用性，因此对清单里的每个模型都会非空，会放弃该优化。
 - 上游在客户端构造时对过滤器做一次快照：必须在 `newSqlClient()` 之前注册完毕；
-  未列入 `models` 的模型完全不会被过滤。
+  未列入 `models` 的模型**本身**不会注册过滤器；但若它的某个祖先在清单中且适用，
+  它仍会通过上游沿 `superEntity` 链的收集拿到该过滤器。只存在于子模型的列，
+  则由该子模型自己注册。
 - 按列过滤请优先用 `addGlobalFor(column, build)`（缺少该列的模型根本不会注册，也不会抛错），
   而不是自行写 `table.someColumn.eq(...)` —— 后者在缺列模型上会抛 `TypeError`。
 - `manager.unknownColumns(models)` 列出给定模型中都不存在的列名；继承来的列算存在，

@@ -19,8 +19,8 @@ export interface GlobalFilterManager extends FilterManager {
   /**
    * 只对**拥有该列**的模型注册过滤器，其余模型完全不注册。
    *
-   * 这是与 `addGlobal()` 的关键差别：缺少该列的模型拿到的是**空列表**，
-   * 上游的关联查询优化得以保留，同时也不会因访问不存在的列而抛错。
+   * 缺少该列的模型拿到的是**空列表**，上游的关联查询优化得以保留，
+   * 同时也不会因访问不存在的列而抛错。
    *
    * ```ts
    * globalFilters.addGlobalFor<NumExpression<number>>('tenantId', (t) => t.eq(tenantId))
@@ -36,8 +36,6 @@ export interface GlobalFilterManager extends FilterManager {
 
   /**
    * 返回在给定模型中**都不存在**的列名 —— 用于发现 `addGlobalFor()` 的拼写错误。
-   *
-   * 列名写错时该过滤器不会注册到任何模型，这里让它可以被显式检查。
    */
   unknownColumns(models: ReadonlyArray<AnyModel>): ReadonlyArray<string>
 }
@@ -47,9 +45,8 @@ export interface GlobalFilterManager extends FilterManager {
  *
  * 上游的 table 类是按实体的声明属性（含继承）生成的，所以用运行时真值判断。
  */
-function tableHasColumn(model: AnyModel, column: string): boolean {
+function entityHasColumn(entity: spi.Entity, column: string): boolean {
   try {
-    const entity = spi.Entity.of(model as never)
     const ctor = (
       entity as unknown as {
         tableClass(): new (e: spi.Entity, join: unknown) => object
@@ -83,21 +80,51 @@ function tableHasColumn(model: AnyModel, column: string): boolean {
  *   自然继承（实例在 options 里传递）；
  * - 不依赖任何私有成员，也不需要在客户端上做任何替换。
  *
- * 代价是需要提供模型清单，并且与上游一致：过滤器在客户端构造时被快照，
- * 因此要在 `newSqlClient()` **之前**注册完毕。未列入 `models` 的模型不会被过滤。
+ * 代价与边界：
+ *
+ * - 需要提供模型清单；
+ * - 与上游一致，过滤器在客户端构造时被快照，因此要在 `newSqlClient()` **之前**注册完毕；
+ * - 未列入清单的模型本身不会被注册，但**若它的某个祖先在清单中且适用，它仍会通过
+ *   上游的继承链拿到该过滤器**（上游行为，见下）。
  */
 export function createGlobalFilterManager(models: ReadonlyArray<AnyModel>): GlobalFilterManager {
   const manager = new FilterManager() as GlobalFilterManager
   const registered: GlobalFilter[] = []
   const knownColumns: string[] = []
 
-  // 按实体去重：同一个实体只注册一次，避免产生重复谓词
-  const targets = [...new Map(models.map((m) => [spi.Entity.of(m as never), m])).values()]
+  // 按实体去重：同一个实体只处理一次
+  const listed = [
+    ...new Map(
+      models.map((model) => {
+        const entity = spi.Entity.of(model as never)
+        return [entity, { entity, model }] as const
+      }),
+    ).values(),
+  ]
+  const listedEntities = new Set(listed.map((entry) => entry.entity))
 
-  function register(filter: GlobalFilter, applies: (model: AnyModel) => boolean): void {
+  /**
+   * 上游构造过滤器列表时会沿 `superEntity` 链逐级收集（`_createFilters`），
+   * 所以若某个「在清单中且适用」的祖先已经贡献了同一个过滤器，本实体就不能再注册，
+   * 否则同一个条件会出现两次。反过来，只存在于子模型上的列不会被祖先覆盖，
+   * 该子模型仍需自己注册。
+   */
+  function hasApplicableListedAncestor(
+    entity: spi.Entity,
+    applies: (entity: spi.Entity) => boolean,
+  ): boolean {
+    for (let e: spi.Entity | undefined = entity.superEntity; e != null; e = e.superEntity) {
+      if (listedEntities.has(e) && applies(e)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  function register(filter: GlobalFilter, applies: (entity: spi.Entity) => boolean): void {
     registered.push(filter)
-    for (const model of targets) {
-      if (applies(model)) {
+    for (const { entity, model } of listed) {
+      if (applies(entity) && !hasApplicableListedAncestor(entity, applies)) {
         manager.add(model as never, filter)
       }
     }
@@ -125,7 +152,7 @@ export function createGlobalFilterManager(models: ReadonlyArray<AnyModel>): Glob
             }
             return build(onTable)
           },
-          (model) => tableHasColumn(model, column),
+          (entity) => entityHasColumn(entity, column),
         )
         return manager
       },
@@ -135,7 +162,9 @@ export function createGlobalFilterManager(models: ReadonlyArray<AnyModel>): Glob
     },
     unknownColumns: {
       value: (others: ReadonlyArray<AnyModel>) =>
-        knownColumns.filter((column) => !others.some((m) => tableHasColumn(m, column))),
+        knownColumns.filter(
+          (column) => !others.some((m) => entityHasColumn(spi.Entity.of(m as never), column)),
+        ),
     },
   })
 
