@@ -71,9 +71,13 @@ prop.str(36).default(dsl.native.str`uuid_generate_v4()`) // SQL 函数
 ### 从列元数据读取
 
 ```ts
-const column: ColumnDef = /* ... */ column.prop?.autoIncrement // boolean
-column.prop?.default // 字面量或表达式节点，或 undefined
+// columnDef 是消费方（例如迁移引擎）拿到的列元数据
+columnDef.prop?.autoIncrement // boolean
+columnDef.prop?.default // 字面量或表达式节点，或 undefined
 ```
+
+这两个属性通过声明合并挂在 `spi.EntityProp` 上，无需类型转换即可访问；
+需要显式命名类型时可以用导出的 `PatchedEntityProp`。
 
 `isColumnDefaultExpression(value)` 用于区分表达式节点与字面量。它按 ts-grm 的节点标记
 `__type().expressionLike` 判别，而不是 `instanceof`，因此在同一进程同时加载 ESM 与 CJS
@@ -169,6 +173,8 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
 ### 迁移引擎侧的消费方式
 
 ```ts
+import { isColumnDefaultExpression } from 'ts-grm-patches'
+
 const d = columnDef.prop?.default
 if (isColumnDefaultExpression(d)) {
   // d 是表达式节点（如 dsl.native.* 产出），带 `parts`
