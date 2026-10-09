@@ -80,9 +80,14 @@ The patch only **carries** the expression node; it never renders SQL.
 ### Reading from column metadata
 
 ```ts
-const column: ColumnDef = /* ... */ column.prop?.autoIncrement // boolean
-column.prop?.default // literal or expression node, or undefined
+// `columnDef` is the column metadata a consumer receives, e.g. a migration engine
+columnDef.prop?.autoIncrement // boolean
+columnDef.prop?.default // literal or expression node, or undefined
 ```
+
+Both properties are declared on `spi.EntityProp` through a declaration merge, so they
+type-check without a cast. `PatchedEntityProp` is exported for cases where you need to
+name the type explicitly.
 
 `isColumnDefaultExpression(value)` tells expression nodes apart from literals. It
 discriminates on the ts-grm node marker `__type().expressionLike` rather than
@@ -199,6 +204,8 @@ never overwrites.
 ### Consuming from a migration engine
 
 ```ts
+import { isColumnDefaultExpression } from 'ts-grm-patches'
+
 const d = columnDef.prop?.default
 if (isColumnDefaultExpression(d)) {
   // d is an expression node (e.g. produced by dsl.native.*), carrying `parts`
