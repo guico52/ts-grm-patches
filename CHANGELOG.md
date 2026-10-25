@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-25
+
 ### Added
 
 - `BOOL` and `TEXT` columns can be used in query expressions (`where` / `orderBy` /
@@ -13,6 +15,17 @@ All notable changes to this project are documented here. The format follows
   in that case and steps aside once upstream supports them.
 - `bool()` / `nullableBool()`: `prop.bool()` typed so the column's `eq(...)` accepts a
   `boolean` (upstream's conditional type splits it into `true | false`).
+
+### Changed
+
+- The published package now includes `CHANGELOG.md`, and `package.json` links to the
+  GitHub repository, homepage and issue tracker.
+
+### Documentation
+
+- Known limitations: with ES modules, call `applyPatches()` in its own module imported
+  before any model module; the type augmentation is visible before the runtime patch is
+  applied.
 
 ## [0.2.1] - 2026-10-09
 
@@ -56,7 +69,8 @@ All notable changes to this project are documented here. The format follows
 - Forward-compatible support for upstream `IDENTITY` ID generation (not present in
   `@ts-grm/core` 0.0.13).
 
-[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/guico52/ts-grm-patches/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/guico52/ts-grm-patches/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/guico52/ts-grm-patches/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/guico52/ts-grm-patches/releases/tag/v0.1.0
