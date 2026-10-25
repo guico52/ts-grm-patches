@@ -1,5 +1,7 @@
 import { __ScalarProp, spi } from '@ts-grm/core'
 
+import { installQueryProps } from './query-props'
+
 import type { ColumnDefaultValue, ColumnPatchData } from './types'
 
 let applied = false
@@ -94,4 +96,5 @@ export function applyPatches(): void {
   applied = true
   installScalarModifiers()
   installMetadataReaders()
+  installQueryProps()
 }

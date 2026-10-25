@@ -182,6 +182,50 @@ field. An explicit model array works too.
 - Inside a filter, `table.__entity` exposes the current `spi.Entity`, so a global filter
   can scope itself to — or exclude — specific models.
 
+## BOOL and TEXT columns in queries
+
+In `@ts-grm/core` 0.0.13, `createTableProp` only builds property expressions for numeric,
+`STR` and `DATETIME` columns. A `prop.bool()` or `prop.text()` column therefore throws
+`ArgumentError: Cannot create table prop … whose scalar type is BOOL/TEXT` as soon as it is
+used in `where` / `orderBy` / `select`.
+
+`applyPatches()` wraps `spi.Entity.prototype.tableClass` and gives those two kinds a property
+expression (`BOOL` → a comparable expression, `TEXT` → a full string expression with
+`like` / `lower()` …). **The upstream getter is always called first**; the patch only takes
+over when it throws that "unsupported scalar type" `ArgumentError`, so once upstream supports
+these columns the patch steps aside by itself. Any other error — including an `ArgumentError`
+for a different reason — is rethrown.
+
+`TEXT` needs nothing else: `prop.text()` is already typed as a string column. `BOOL` also has a
+type-level problem — `boolean` is distributed into `true | false`, which makes the parameter of
+`eq` resolve to `never` — so declare query-able boolean columns with `bool()`:
+
+```ts
+import { applyPatches, bool, nullableBool } from 'ts-grm-patches'
+
+applyPatches()
+
+const ARTICLE = model(
+  'Article',
+  'id',
+  class {
+    id = prop.i32()
+    body = prop.text() // queryable after applyPatches()
+    published = bool().default(false) // instead of prop.bool()
+    pinned = nullableBool() // instead of prop.bool().nullable()
+  },
+)
+
+client.createQuery(ARTICLE, (q, a) =>
+  q.where(a.published.eq(true), a.body.like('ts-grm')).select(a.id),
+)
+```
+
+`bool()` is `prop.bool()` at runtime; it only marks the type as customized so the column is
+inferred as `Expression<boolean>`. It produces exactly the same column, so switching back to
+`prop.bool()` after an upstream fix needs no migration. Use `nullableBool()` for nullable
+columns: upstream `nullable()` drops the marker.
+
 ## Data flow
 
 The patch does not hook the schema-build pipeline; it rides the existing data
@@ -193,13 +237,14 @@ prop.i32().autoIncrement()          // writes a field into __PropData
     → ColumnDef.prop                // schema_creator holds that EntityProp
 ```
 
-`applyPatches()` only does two things:
+`applyPatches()` does three things:
 
 1. installs `autoIncrement()` / `default(value)` on `__ScalarProp`
 2. installs read-only `autoIncrement` / `default` readers on `spi.EntityProp`
+3. wraps `spi.Entity.prototype.tableClass` so `BOOL` / `TEXT` columns can join queries
 
-If upstream ever provides members with those names, the patch steps aside — it
-never overwrites.
+If upstream ever provides members with those names, or starts supporting those columns in
+queries, the patch steps aside — it never overwrites.
 
 ## API
 
@@ -219,6 +264,8 @@ never overwrites.
   model), `addGlobalFor(column, build)` (only models having that column),
   `unknownColumns(models)`, and `globalFilters`.
 - `GlobalFilter` — an upstream `AnyFilter`.
+- `bool(): __ScalarProp<boolean, 'NONNULL', true>` / `nullableBool()` — `prop.bool()` typed so
+  the column can be compared in queries (see BOOL and TEXT columns in queries).
 
 ### Consuming from a migration engine
 
@@ -236,10 +283,18 @@ if (isColumnDefaultExpression(d)) {
 
 ## Known limitations
 
-- `applyPatches()` must run before any `model(...)` definition.
+- `applyPatches()` must run before any `model(...)` definition. With ES modules, imports are
+  evaluated before the importing module's body, so calling it at the top of `main.ts` is too
+  late if `main.ts` also imports your model modules. Call it in a small module of its own and
+  import that module first.
+- The type augmentation (`autoIncrement()` / `default()` on props) is visible as soon as this
+  package's types are loaded — even through `import type`. The methods only exist at runtime
+  after `applyPatches()` has been called.
 - The patch extends prototypes of classes from `@ts-grm/core`. If two copies of
   the upstream package (ESM and CJS) are loaded in one process, only one of them
   gets patched. The expression discriminator above avoids this pitfall.
+- The BOOL / TEXT query patch covers scalar properties declared directly on an entity; properties
+  inside embedded values and on middle (association) entities are not covered.
 - `createGlobalFilterManager()` is async (it takes the models from an `EntityManager`), and —
   like upstream — the filters are snapshotted when the client is constructed (see Global
   filters).
