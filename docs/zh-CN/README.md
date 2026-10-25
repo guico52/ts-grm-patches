@@ -151,6 +151,46 @@ const client = newSqlClient(new PostgresDriver(pool), {
 - 过滤器内部可通过 `table.__entity` 拿到当前的 `spi.Entity`，因此可以把全局过滤器限定到
   或排除掉特定模型。
 
+## 布尔与文本列参与查询
+
+`@ts-grm/core` 0.0.13 的 `createTableProp` 只为数值、`STR`、`DATETIME` 列建立属性表达式，
+`prop.bool()` / `prop.text()` 列一旦用在 `where` / `orderBy` / `select` 里，就会抛出
+`ArgumentError: Cannot create table prop … whose scalar type is BOOL/TEXT`。
+
+`applyPatches()` 包装 `spi.Entity.prototype.tableClass`，为这两类列补上属性表达式
+（`BOOL` → 可比较表达式，`TEXT` → 完整的字符串表达式，支持 `like` / `lower()` 等）。
+**始终先调用上游 getter**，只有它因「不支持该标量类型」抛出 `ArgumentError` 时补丁才接管；
+上游支持这两类列之后，补丁自动让位。其他错误（包括其他原因的 `ArgumentError`）照常抛出。
+
+`TEXT` 不需要额外处理：`prop.text()` 在类型上本来就是字符串列。`BOOL` 还有一个类型问题
+—— `boolean` 被分配成 `true | false`，`eq` 的参数推导为 `never` —— 所以需要参与查询的布尔列
+用 `bool()` 声明：
+
+```ts
+import { applyPatches, bool, nullableBool } from 'ts-grm-patches'
+
+applyPatches()
+
+const ARTICLE = model(
+  'Article',
+  'id',
+  class {
+    id = prop.i32()
+    body = prop.text() // applyPatches() 之后即可查询
+    published = bool().default(false) // 代替 prop.bool()
+    pinned = nullableBool() // 代替 prop.bool().nullable()
+  },
+)
+
+client.createQuery(ARTICLE, (q, a) =>
+  q.where(a.published.eq(true), a.body.like('ts-grm')).select(a.id),
+)
+```
+
+`bool()` 在运行时就是 `prop.bool()`，只是在类型上标记为 customized，使列推导为
+`Expression<boolean>`。生成的列完全相同，上游修复后改回 `prop.bool()` 不产生迁移。
+可空列请用 `nullableBool()`：上游的 `nullable()` 会丢掉这个标记。
+
 ## 数据流
 
 补丁不 hook 上游的 schema 构建流程，而是利用既有的数据通路：
@@ -161,12 +201,13 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
     → ColumnDef.prop                // schema_creator 持有该 EntityProp
 ```
 
-`applyPatches()` 只做两件事：
+`applyPatches()` 做三件事：
 
 1. 给 `__ScalarProp` 安装 `autoIncrement()` / `default(value)`
 2. 给 `spi.EntityProp` 安装 `autoIncrement` / `default` 只读读取器
+3. 包装 `spi.Entity.prototype.tableClass`，让 `BOOL` / `TEXT` 列可以参与查询
 
-若上游将来原生提供同名成员，补丁会自动让位（不覆盖）。
+若上游将来原生提供同名成员，或开始支持这两类列参与查询，补丁会自动让位（不覆盖）。
 
 ## API
 
@@ -184,6 +225,8 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
 - `GlobalFilterManager` —— 上游 `FilterManager` 加上 `addGlobal(filter)`（清单中所有模型）、
   `addGlobalFor(column, build)`（仅拥有该列的模型）、`unknownColumns(models)` 与 `globalFilters`。
 - `GlobalFilter` —— 上游的 `AnyFilter`。
+- `bool(): __ScalarProp<boolean, 'NONNULL', true>` / `nullableBool()` —— 类型上可在查询中比较的
+  `prop.bool()`（见「布尔与文本列参与查询」）。
 
 ### 迁移引擎侧的消费方式
 
@@ -201,9 +244,15 @@ if (isColumnDefaultExpression(d)) {
 
 ## 已知限制
 
-- 必须在定义任何 `model(...)` **之前**调用 `applyPatches()`。
+- 必须在定义任何 `model(...)` **之前**调用 `applyPatches()`。ES 模块的 `import` 先于本模块的
+  函数体求值，若 `main.ts` 同时导入了模型模块，在其顶部调用就已经晚了。请把调用放进一个单独的
+  模块，并最先导入它。
+- 类型增强（prop 上的 `autoIncrement()` / `default()`）只要加载了本包的类型就可见，
+  即使只是 `import type`；运行时方法则只在调用 `applyPatches()` 之后才存在。
 - 补丁作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
   补丁只作用于其中一份。上面的表达式判别函数已避开这个坑。
+- 布尔 / 文本查询补丁只覆盖实体上直接声明的标量属性；嵌入字段内的属性与中间（关联）实体上的
+  属性不在范围内。
 - `createGlobalFilterManager()` 是异步的（模型取自 `EntityManager`）；与上游一致，过滤器在
   客户端构造时被快照（见「全局过滤器」）。
 
