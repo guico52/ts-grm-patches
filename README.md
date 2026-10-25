@@ -4,7 +4,8 @@ English | [简体中文](docs/zh-CN/README.md)
 
 Extension patches for [ts-grm](https://github.com/babyfish-ct/ts-grm) that add
 **column-level `autoIncrement` and `default`**, closing the gap between `ts-grm`
-and `ts-grm-migrate`.
+and `ts-grm-migrate`. It also provides global query filters and works around some
+upstream issues that are still open (see [Upstream issues](#upstream-issues)).
 
 ## Why this exists
 
@@ -35,6 +36,16 @@ consumer's responsibility (for example `ts-grm-migrate`).
 `@ts-grm/core` and `@ts-grm/sql` are **peerDependencies**
 (`>=0.0.13 <0.0.14`), supplied by the host project. Upstream implementations are
 never bundled.
+
+## Upstream issues
+
+Some open issues in ts-grm can be worked around from outside. Each workaround first
+lets upstream try, and steps aside by itself once upstream is fixed — no code changes
+needed on your side.
+
+| Issue                                                                                                           | Status in this package                                                                                    |
+| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| [#9](https://github.com/babyfish-ct/ts-grm/issues/9) `prop.bool()` columns cannot be used in `where` / `select` | Fixed, also for `prop.text()` — see [BOOL and TEXT columns in queries](#bool-and-text-columns-in-queries) |
 
 ## Usage
 
@@ -225,6 +236,15 @@ client.createQuery(ARTICLE, (q, a) =>
 inferred as `Expression<boolean>`. It produces exactly the same column, so switching back to
 `prop.bool()` after an upstream fix needs no migration. Use `nullableBool()` for nullable
 columns: upstream `nullable()` drops the marker.
+
+> [!WARNING]
+> **Upstream problem — reading `NULL` from a nullable boolean column returns `true`.**
+> `@ts-grm/sql` 0.0.13 converts a `BOOL` value before checking for `NULL`, so a `NULL` stored
+> in a nullable boolean column is read back as `true`, with no error. This happens in
+> upstream's internal row reader, which this package cannot reach, and it affects
+> `prop.bool().nullable()` with or without this package. Filtering is not affected
+> (`where(a.pinned.isNull())` works); only reading the value back is. Until upstream fixes
+> it, prefer non-null boolean columns with a default, e.g. `bool().default(false)`.
 
 ## Data flow
 
