@@ -51,10 +51,6 @@ export type PatchedEntityProp = spi.EntityProp & {
 
 /*
  * 声明合并要求泛型参数列表与上游类声明完全一致，因此 TNullity / TCustomized
- * 虽未在接口体内使用，也必须保留。
- */
-/*
- * 声明合并要求泛型参数列表与上游类声明完全一致，因此 TNullity / TCustomized
  * 虽未在接口体内使用，也必须保留；而增强 `spi` 命名空间下的成员，也只能用
  * namespace + interface 合并的写法。
  */

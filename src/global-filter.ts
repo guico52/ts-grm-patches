@@ -130,6 +130,9 @@ export async function createGlobalFilterManager(
     }
   }
 
+  // 必须是 `FilterManager` 本身的实例，不能用子类：上游 `newSqlClient` 合并 options 时
+  // 以 `value.constructor` 精确匹配 `FilterManager`（`utils.ts` 的 `CLASSES`），
+  // 子类实例会被展开成普通对象，丢掉 `_toMap()` 等原型方法。因此把扩展方法定义在实例上。
   Object.defineProperties(manager, {
     addGlobal: {
       value(filter: GlobalFilter | undefined) {

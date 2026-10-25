@@ -1,17 +1,27 @@
 {
   "name": "ts-grm-patches",
-  "version": "0.1.0",
-  "description": "Extension patches for ts-grm: adds column-level autoIncrement and default support so ts-grm binaries and ts-grm-migrate can emit the matching DDL",
+  "version": "0.2.1",
+  "description": "Extension patches for ts-grm: column-level autoIncrement/default for DDL and migrations, global query filters, and BOOL/TEXT columns in query expressions",
   "keywords": [
     "ts-grm",
     "orm",
     "schema-migration",
     "auto-increment",
     "default-value",
+    "global-filter",
+    "multi-tenant",
     "patch"
   ],
   "license": "MIT",
   "author": "guico <1305487489@qq.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guico52/ts-grm-patches.git"
+  },
+  "homepage": "https://github.com/guico52/ts-grm-patches#readme",
+  "bugs": {
+    "url": "https://github.com/guico52/ts-grm-patches/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
@@ -21,7 +31,8 @@
     "dist",
     "docs",
     "LICENSES",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "main": "./dist/index.cjs",
