@@ -1,6 +1,6 @@
 {
   "name": "ts-grm-patches",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Extension patches for ts-grm: column-level autoIncrement/default for DDL and migrations, global query filters, and BOOL/TEXT columns in query expressions",
   "keywords": [
     "ts-grm",
