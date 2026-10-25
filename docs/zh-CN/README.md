@@ -3,7 +3,8 @@
 [English](../../README.md) | 简体中文
 
 为 [ts-grm](https://github.com/babyfish-ct/ts-grm) 补齐**列的 `autoIncrement` 与
-`default` 支持**，填平 `ts-grm` 与 `ts-grm-migrate` 之间的需求鸿沟。
+`default` 支持**，填平 `ts-grm` 与 `ts-grm-migrate` 之间的需求鸿沟。此外还提供全局过滤器，
+并绕过了部分上游尚未修复的 issue（见[上游 issue](#上游-issue)）。
 
 ## 背景
 
@@ -28,6 +29,15 @@ ts-grm 的列元数据（`ColumnDef`，见 `packages/sql/src/impl/schema_def.ts`
 
 `@ts-grm/core` 与 `@ts-grm/sql` 是本包的 **peerDependencies**（`>=0.0.13 <0.0.14`），
 由宿主项目提供，本包不打包上游实现。
+
+## 上游 issue
+
+ts-grm 中部分尚未修复的 issue 可以从外部绕过。每一处绕过都先交给上游处理，上游修复后
+补丁自动让位，使用方无需改代码。
+
+| Issue                                                                                            | 本包中的状态                                                                      |
+| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| [#9](https://github.com/babyfish-ct/ts-grm/issues/9) `prop.bool()` 列无法用于 `where` / `select` | 已解决，`prop.text()` 列同样适用，见[布尔与文本列参与查询](#布尔与文本列参与查询) |
 
 ## 用法
 
@@ -190,6 +200,13 @@ client.createQuery(ARTICLE, (q, a) =>
 `bool()` 在运行时就是 `prop.bool()`，只是在类型上标记为 customized，使列推导为
 `Expression<boolean>`。生成的列完全相同，上游修复后改回 `prop.bool()` 不产生迁移。
 可空列请用 `nullableBool()`：上游的 `nullable()` 会丢掉这个标记。
+
+> [!WARNING]
+> **上游问题：读取可空布尔列中的 `NULL` 会得到 `true`。**
+> `@ts-grm/sql` 0.0.13 在判断 `NULL` 之前就转换了 `BOOL` 值，因此可空布尔列中存储的 `NULL`
+> 会被读成 `true`，且不报错。问题出在上游内部的行读取器，本包无法触及；无论是否使用本包，
+> `prop.bool().nullable()` 都会受影响。过滤不受影响（`where(a.pinned.isNull())` 正常），
+> 只有读回值时出错。在上游修复之前，建议使用带默认值的非空布尔列，例如 `bool().default(false)`。
 
 ## 数据流
 
