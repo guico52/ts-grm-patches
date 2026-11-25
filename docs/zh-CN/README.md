@@ -2,71 +2,78 @@
 
 [English](../../README.md) | 简体中文
 
-为 [ts-grm](https://github.com/babyfish-ct/ts-grm) 补齐**列的 `autoIncrement` 与
-`default` 支持**，填平 `ts-grm` 与 `ts-grm-migrate` 之间的需求鸿沟。此外还提供全局过滤器，
-并绕过了部分上游尚未修复的 issue（见[上游 issue](#上游-issue)）。
+为 [ts-grm](https://github.com/babyfish-ct/ts-grm) 提供**可选增强层**：方言绑定 client、链式查询函数、自动分组、全局过滤器和列元数据，同时保留针对上游问题的修复。
 
-## 背景
+## 定位与能力
 
-ts-grm 的列元数据（`ColumnDef`，见 `packages/sql/src/impl/schema_def.ts`）只表达
-`name` / `type` / `nullable` / `length` / `precision` / `scale` / `when`，**不表达自增与列默认值**。
-由此导致两块能力缺失：
+本包起步于 ts-grm-migrate 需要的列元数据补丁，现在也覆盖查询体验和数据库函数支持。ts-grm 继续负责模型、AST、SQL 渲染、参数绑定、执行器、连接池和事务；本包通过显式创建/增强 client、安装元数据修饰符接入这些原生能力。
 
-- ts-grm 生成 `create table` 时无法输出自增列（`serial` / `identity` / `auto_increment`）与列默认值。
-- ts-grm-migrate 的模型适配器只能把它们写死为 `default: undefined` / `autoIncrement: false`
-  （见该仓库的 `src/schema/adapter.ts`），因此迁移无法产出对应的数据库功能。
+| 能力                                                     | 入口                                   | 详细文档                                                           |
+| -------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------ |
+| 创建时绑定数据库、匹配的方言函数命名空间、派生时保留类型 | `newSqlClient` 与五个方言子路径        | [方言绑定 client](./dialect-clients.md)                            |
+| select 后添加条件，保留投影结果推导                      | `select(...).where(...)`               | [链式条件](./query-functions.md#select-后继续添加条件)             |
+| 上游 DSL/表达式方法的函数形式，继续嵌套 SQL 函数         | `client.fn`、`q.fn`                    | [查询函数](./query-functions.md)                                   |
+| 五库数学/字符串函数适配、去重计数、专有函数和 UDF 声明   | 通用函数和匹配的方言命名空间           | [函数支持](./query-functions.md#通用函数的方言实现)                |
+| 识别聚合依赖，以完整标量表达式推导分组键                 | 显式 `autoGroupBy()`                   | [自动分组与限制](./query-functions.md)                             |
+| 按模型集合或匹配列注册过滤器                             | `createGlobalFilterManager`            | [全局过滤器](#全局过滤器)                                          |
+| 自增/默认值元数据及 BOOL/TEXT 查询修复                   | `applyPatches`、`bool`、`nullableBool` | [列元数据](#列元数据与迁移集成)、[查询修复](#布尔与文本列参与查询) |
 
-本包作为 ts-grm 的**扩展补丁**，补齐这部分缺口。
+从[增强包接入指南](./enhancement-guide.md)开始，根据需要启用能力。列元数据由 ts-grm-migrate 等消费方读取，并由它们负责生成相应 DDL。
 
-## 能力范围
+## 依赖与发布状态
 
-本包**为 ts-grm 添加能力**：列元数据、全局过滤器、查询函数与可选的自动分组。
+- Node.js **>=20**。
+- 宿主项目提供 `@ts-grm/core` 和 `@ts-grm/sql`，支持范围为 **`>=0.0.13 <0.0.14`**；本包不打包上游实现。
+- 本文新增增强能力目前记在 [Unreleased](../../CHANGELOG.md#unreleased)，仓库版本仍为 `0.2.2`。请使用包含这些 API 的构建或后续发布版本；开发分支上的能力不代表先前发布的 `0.2.2` 已包含它们。
 
-列元数据补丁**不负责 DDL 生成** —— 把 `autoIncrement` / `default` 翻译成 `serial` / `identity(1,1)` /
-`auto_increment` / `default <...>` 子句，是消费方（例如 ts-grm-migrate）的职责。
+查询增强通过创建或增强 client 启用。列修饰符和 BOOL/TEXT 修复由 `applyPatches()` 单独安装，并须早于模型定义。仅导入包不会自动安装这些运行时补丁。全局过滤器也可以独立交给原生 client 使用。
 
-## 依赖要求
+## 查询增强快速开始
 
-`@ts-grm/core` 与 `@ts-grm/sql` 是本包的 **peerDependencies**（`>=0.0.13 <0.0.14`），
-由宿主项目提供，本包不打包上游实现。
-
-## 查询函数与自动分组
-
-`enhanceClient(client)` 给指定的原生 client 添加 `q.fn` 与 `q.autoGroupBy()`，继续使用原生查询生成、绑定、执行和事务：
+以下示例沿用项目已有的 pool、entityManager 和 ORDER 模型：
 
 ```ts
-import { enhanceClient } from 'ts-grm-patches'
+import { PostgresDriver } from '@ts-grm/sql'
+import { newSqlClient } from 'ts-grm-patches/postgres'
 
-const db = enhanceClient(client)
-await db
+const db = newSqlClient(new PostgresDriver(pool), { entityManager })
+
+const rows = await db
   .createQuery(ORDER, (q, t) =>
     q
       .select({
-        category: q.fn.lower(t.category),
-        total: q.fn.sum(t.amount).coalesce(0),
+        category: q.fn.lower(t.category).trim(),
+        total: q.fn.sum(t.amount).abs().round(2).coalesce(0),
+        count: q.fn.count(),
       })
       .where(t.amount.gt(0))
       .autoGroupBy(),
   )
   .fetchList()
+
+// db.dialect 的类型是 'postgres'；专有函数入口是 db.fn.postgres。
 ```
 
-支持已安装版本的全部 DSL 入口与表达式方法的函数形式，以及五库专有函数命名空间。聚合自带语义标记，自动分组保留完整标量表达式，不收集聚合输入列。完整说明见[查询函数与自动分组](./query-functions.md)，包括参数化键分层、数值读取、方言函数及当前限制。
+select/selectDistinct 支持在所属回调中链式追加条件并保留结果类型。autoGroupBy 对完整的 category 标量表达式分组，不把聚合输入列加入分组键。函数结果继续链式嵌套，client.fn 也支持在根查询外构建增强的 BaseQuery 和子查询。
 
-select 后可以继续链式调用 where 等条件方法，在回调结束时统一定稿；q.fn 的返回值也会逐步增强，支持 SQL 函数嵌套并保留类型和聚合依赖。
+已有 PostgreSQL client 可使用 ts-grm-patches/postgres 的 enhanceClient 做运行时检查和实例增强。根入口 newSqlClient 可以从具体 driver 推导数据库类别；绑定贯穿派生、投影与嵌套查询，只暴露匹配的方言命名空间。
 
-新建 client 可从本包或 ts-grm-patches/postgres 等方言子路径导入 newSqlClient，创建时即绑定原生 driver 对应的数据库类别，只暴露匹配的函数命名空间，并在派生 client 时保留绑定。详见[创建时绑定数据库方言](./dialect-clients.md)。
+通用函数包含 abs/sign/ceil/floor/round/trunc/power/sqrt/exp/ln/log10、charLength/octetLength、countDistinct，并适配字符串截取、查找、补齐、trim。方言命名空间覆盖部分 JSON、数组、全文检索和日期函数，call 提供普通函数/UDF 的显式契约。完整列表及能力门槛见[查询函数文档](./query-functions.md)。
+
+SQLite 可选数学函数与 octetLength 需要相应版本/能力声明。精度、NULL、Unicode 等保留已说明的厂商边界；此增强层没有修复上游聚合计数。查询增强有可测量的 CPU 开销，详见[优化前后性能报告](./query-performance.md)。SQLite 有真实执行验证，其他四库目前验证原生 renderer 与参数绑定，尚无服务端集成验证。
 
 ## 上游 issue
 
-ts-grm 中部分尚未修复的 issue 可以从外部绕过。每一处绕过都先交给上游处理，上游修复后
+支持版本中的部分 ts-grm issue 可以从外部绕过。每一处绕过都先交给上游处理，上游修复后
 补丁自动让位，使用方无需改代码。
 
 | Issue                                                                                            | 本包中的状态                                                                      |
 | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
 | [#9](https://github.com/babyfish-ct/ts-grm/issues/9) `prop.bool()` 列无法用于 `where` / `select` | 已解决，`prop.text()` 列同样适用，见[布尔与文本列参与查询](#布尔与文本列参与查询) |
 
-## 用法
+## 列元数据与迁移集成
+
+原有列元数据增强继续服务于 ts-grm-migrate：自增和默认值声明经 EntityProp 传到 ColumnDef.prop。消费方将其翻译成 DDL，安装器负责提供这些元数据。
 
 ```ts
 import { dsl, model, prop } from '@ts-grm/core'
@@ -255,6 +262,12 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
 
 ## API
 
+- `newSqlClient(source, options?, dialectOptions?)` —— 创建增强的原生 client，或从已绑定 client 派生；也提供 `/postgres`、`/mysql`、`/sqlite`、`/sqlserver`、`/oracle` 子路径。
+- `enhanceClient(client)` —— 增强已有实例；方言子路径同时检查数据库类别，并保留相应命名空间类型。
+- `client.fn` / `q.fn` —— `QueryFunctions`，提供通用函数、语义标记、增强子查询/BaseQuery 与匹配的专有命名空间。
+- 增强的 select/selectDistinct 投影支持 where、having、orderBy、groupBy、autoGroupBy，使用范围截止于所属查询回调结束。
+- `getFunctionMetadata(expression)` / `QuerySemanticError` —— 函数元数据读取与显式构建期语义错误。
+- `EnhancedSqlClient`、`Chained*Expression`、`DialectProfile`、`DialectOptions` —— client、表达式与能力声明的公开类型。
 - `applyPatches(): void` —— 安装补丁。幂等；必须在任何 `model(...)` 定义之前调用。
 - `isColumnDefaultExpression(value: unknown): value is ColumnDefaultExpression` ——
   默认值是 SQL 表达式节点而非字面量时返回 `true`。
@@ -293,7 +306,7 @@ if (isColumnDefaultExpression(d)) {
   模块，并最先导入它。
 - 类型增强（prop 上的 `autoIncrement()` / `default()`）只要加载了本包的类型就可见，
   即使只是 `import type`；运行时方法则只在调用 `applyPatches()` 之后才存在。
-- 补丁作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
+- 元数据/BOOL/TEXT 安装器作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
   补丁只作用于其中一份。上面的表达式判别函数已避开这个坑。
 - 布尔 / 文本查询补丁只覆盖实体上直接声明的标量属性；嵌入字段内的属性与中间（关联）实体上的
   属性不在范围内。
@@ -309,6 +322,8 @@ pnpm typecheck      # 类型检查 (tsc --noEmit)
 pnpm lint           # ESLint
 pnpm format         # Prettier 格式化
 pnpm test           # 运行测试（含端到端：真实 model → createSchema() → 列元数据）
+pnpm test:exports   # 验证 ESM/CJS 的方言入口、绑定与元数据共享
+pnpm bench:query    # 独立进程的查询构建/渲染性能对比
 pnpm coverage       # 测试覆盖率
 pnpm build          # 构建到 dist/ (ESM + CJS + d.ts)
 ```

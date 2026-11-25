@@ -1,7 +1,7 @@
 {
   "name": "ts-grm-patches",
   "version": "0.2.2",
-  "description": "Extension patches for ts-grm: schema metadata, global filters, fluent query functions and dialect-bound SQL clients",
+  "description": "Optional enhancements for ts-grm: dialect-bound clients, fluent query functions, automatic grouping, filters and schema metadata",
   "keywords": [
     "ts-grm",
     "orm",
@@ -10,6 +10,10 @@
     "default-value",
     "global-filter",
     "multi-tenant",
+    "enhancement",
+    "query-functions",
+    "sql-dialect",
+    "automatic-grouping",
     "patch"
   ],
   "license": "MIT",

@@ -2,83 +2,99 @@
 
 English | [简体中文](docs/zh-CN/README.md)
 
-Extension patches for [ts-grm](https://github.com/babyfish-ct/ts-grm) that add
-**column-level `autoIncrement` and `default`**, closing the gap between `ts-grm`
-and `ts-grm-migrate`. It also provides global query filters and works around some
-upstream issues that are still open (see [Upstream issues](#upstream-issues)).
+An optional **enhancement layer for [ts-grm](https://github.com/babyfish-ct/ts-grm)**:
+dialect-bound clients, fluent query functions, automatic grouping, global filters,
+and column metadata. Targeted upstream fixes remain part of the package.
 
-## Why this exists
+## Role and capabilities
 
-ts-grm's column metadata (`ColumnDef`, see `packages/sql/src/impl/schema_def.ts`)
-expresses only `name` / `type` / `nullable` / `length` / `precision` / `scale` /
-`when`. It expresses **neither auto-increment nor column defaults**, which leaves
-two capabilities missing:
+The package began with column metadata needed by ts-grm-migrate and now improves
+query ergonomics and database-function support. ts-grm continues to provide the
+models, AST, SQL renderer, parameter binding, executor, connection pools and transactions.
+Enhancements attach through explicit client factories, selected client instances,
+or the metadata installer.
 
-- ts-grm cannot emit self-incrementing columns (`serial` / `identity` /
-  `auto_increment`) or column defaults in its generated `create table`.
-- ts-grm-migrate's model adapter has to hard-code them as `default: undefined` /
-  `autoIncrement: false` (see `src/schema/adapter.ts` in that repository), so
-  migrations cannot produce the corresponding database features.
+| Capability                                                                                       | Entry point                                         | Guide                                                                                                           |
+| ------------------------------------------------------------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Database binding at client creation; typed dialect namespace and derived clients                 | `newSqlClient`, five dialect subpaths               | [Dialect-bound clients](docs/zh-CN/dialect-clients.md)                                                          |
+| Conditions after selection, including `select(...).where(...)`                                   | Enhanced query callbacks                            | [Fluent queries](docs/zh-CN/query-functions.md#select-后继续添加条件)                                           |
+| Function form of upstream DSL/methods; recursive SQL-function chains                             | `client.fn`, `q.fn`                                 | [Query functions](docs/zh-CN/query-functions.md)                                                                |
+| Five-dialect numeric/string implementations, `countDistinct`, vendor functions and UDF contracts | Common functions and the matching dialect namespace | [Function support](docs/zh-CN/query-functions.md#通用函数的方言实现)                                            |
+| Aggregate-aware grouping from full scalar expressions                                            | Opt-in `autoGroupBy()`                              | [Grouping and limits](docs/zh-CN/query-functions.md)                                                            |
+| Cross-model filters with column-based registration                                               | `createGlobalFilterManager`                         | [Global filters](#global-filters)                                                                               |
+| Column auto-increment/default metadata and BOOL/TEXT query fixes                                 | `applyPatches`, `bool`, `nullableBool`              | [Column metadata](#column-metadata-and-migration-integration), [query fixes](#bool-and-text-columns-in-queries) |
 
-This package is the **extension patch** that fills the gap.
+Start with the [enhancement guide](docs/zh-CN/enhancement-guide.md), then choose the
+features your application needs. The column metadata is consumed by tools such as
+ts-grm-migrate, which remain responsible for generating the corresponding DDL.
 
-## Scope
+## Requirements and release status
 
-It **adds capability to ts-grm**: column metadata, global filters, query functions,
-and opt-in automatic grouping.
+- Node.js **>=20**.
+- Host-provided `@ts-grm/core` and `@ts-grm/sql`: **`>=0.0.13 <0.0.14`**.
+  Upstream implementations are never bundled.
+- The enhancements described here are currently under [Unreleased](CHANGELOG.md#unreleased).
+  The repository version is still `0.2.2`; use a build/release containing these APIs.
+  Their presence on the development branch does not mean a previously published
+  `0.2.2` package contains them.
 
-The column patches do **not generate DDL**. Translating `autoIncrement` / `default` into
-`serial` / `identity(1,1)` / `auto_increment` / `default <...>` clauses is the
-consumer's responsibility (for example `ts-grm-migrate`).
+For query enhancements, create or enhance a client. `applyPatches()` is the separate
+installer for column modifiers and BOOL/TEXT fixes, and must precede model definitions.
+Importing the package alone does not install those runtime patches. Global filters
+can also be used with a native client independently.
 
-## Requirements
+## Query enhancement quick start
 
-`@ts-grm/core` and `@ts-grm/sql` are **peerDependencies**
-(`>=0.0.13 <0.0.14`), supplied by the host project. Upstream implementations are
-never bundled.
-
-## Query functions and automatic grouping
-
-`enhanceClient(client)` extends the selected native client with `q.fn` and
-`q.autoGroupBy()`. It preserves the upstream query builder and executor:
+The application's pool, entityManager and ORDER model are assumed to be defined:
 
 ```ts
-import { enhanceClient } from 'ts-grm-patches'
+import { PostgresDriver } from '@ts-grm/sql'
+import { newSqlClient } from 'ts-grm-patches/postgres'
 
-const db = enhanceClient(client)
-await db
+const db = newSqlClient(new PostgresDriver(pool), { entityManager })
+
+const rows = await db
   .createQuery(ORDER, (q, t) =>
     q
       .select({
-        category: q.fn.lower(t.category),
-        total: q.fn.sum(t.amount).coalesce(0),
+        category: q.fn.lower(t.category).trim(),
+        total: q.fn.sum(t.amount).abs().round(2).coalesce(0),
+        count: q.fn.count(),
       })
       .where(t.amount.gt(0))
       .autoGroupBy(),
   )
   .fetchList()
+
+// db.dialect is 'postgres'; db.fn.postgres is the available vendor namespace.
 ```
 
-The function context exposes every installed upstream DSL entry and expression
-method in function form, plus five dialect namespaces. Aggregates carry semantic
-metadata; grouping follows full scalar expressions and excludes aggregate inputs.
-`client.fn` also supports building enhanced base queries outside root callbacks.
-Selections support chained conditions inside the query callback, and function results
-support recursive SQL-function chains while preserving aggregate dependencies.
+`select`/`selectDistinct` retain result inference and allow chained conditions
+within the owning callback. `autoGroupBy()` groups by the full scalar category
+expression and excludes aggregate inputs. Each value transform continues the
+SQL-function chain. `client.fn` also builds enhanced base queries and subqueries.
 
-For creation-time dialect binding, import `newSqlClient` from this package or a
-dialect entry such as `ts-grm-patches/postgres`. The factory reuses native drivers
-and exposes only the matching function namespace, including in projections and
-nested queries. Derived clients retain their binding and native options.
-See [dialect-bound clients](docs/zh-CN/dialect-clients.md).
+For an existing PostgreSQL client, `enhanceClient` from `ts-grm-patches/postgres`
+checks the driver and enhances that instance. The root factory can infer a database
+from its concrete native driver. Creation, derivation, nested queries and selections
+keep the binding; only the matching dialect namespace is exposed.
 
-See [query functions, dialect catalog, and inference limits](docs/zh-CN/query-functions.md).
-This feature does not repair upstream aggregate counting or promise full cross-database
-function equivalence.
+Common functions include abs/sign/ceil/floor/round/trunc/power/sqrt/exp/ln/log10,
+charLength/octetLength and countDistinct. String slicing, search, padding and trim
+have dialect implementations. Vendor namespaces cover selected JSON, array,
+full-text and date functions, plus an explicit ordinary-function/UDF `call` contract.
+See [the catalog and capability gates](docs/zh-CN/query-functions.md).
+
+SQLite optional math and octetLength require version/capability declarations.
+Function semantics, precision, NULL behavior and Unicode handling retain documented
+vendor boundaries. Upstream aggregate counting is not repaired by this layer.
+Query enhancement has measurable CPU overhead; see the [before/after performance
+review](docs/zh-CN/query-performance.md). SQLite has real execution coverage;
+the other four families have native-renderer/parameter tests, not server integration coverage.
 
 ## Upstream issues
 
-Some open issues in ts-grm can be worked around from outside. Each workaround first
+Some issues in the supported ts-grm version can be worked around from outside. Each workaround first
 lets upstream try, and steps aside by itself once upstream is fixed — no code changes
 needed on your side.
 
@@ -86,7 +102,11 @@ needed on your side.
 | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | [#9](https://github.com/babyfish-ct/ts-grm/issues/9) `prop.bool()` columns cannot be used in `where` / `select` | Fixed, also for `prop.text()` — see [BOOL and TEXT columns in queries](#bool-and-text-columns-in-queries) |
 
-## Usage
+## Column metadata and migration integration
+
+The original metadata additions support ts-grm-migrate: column defaults and
+auto-increment declarations travel through EntityProp to ColumnDef.prop. Consumers
+render those declarations into DDL; this installer only supplies the metadata.
 
 ```ts
 import { dsl, model, prop } from '@ts-grm/core'
@@ -307,6 +327,19 @@ queries, the patch steps aside — it never overwrites.
 
 ## API
 
+- `newSqlClient(source, options?, dialectOptions?)` — creates an enhanced native
+  client, or derives one from a bound client. Also available through
+  `/postgres`, `/mysql`, `/sqlite`, `/sqlserver` and `/oracle` exports.
+- `enhanceClient(client)` — enhances an existing instance; dialect subpaths also
+  check the requested database family and preserve its namespace type.
+- `client.fn` / `q.fn` — `QueryFunctions` with common functions, semantic metadata,
+  enhanced sub/base queries and the matching vendor namespace.
+- Enhanced `select`/`selectDistinct` projections support `where`, `having`,
+  `orderBy`, `groupBy` and `autoGroupBy` until the owning callback completes.
+- `getFunctionMetadata(expression)` / `QuerySemanticError` — metadata inspection
+  and explicit construction-time semantic errors.
+- `EnhancedSqlClient`, `Chained*Expression`, `DialectProfile`, `DialectOptions` —
+  public types for client, expression and declaration boundaries.
 - `applyPatches(): void` — installs the patch. Idempotent; must run before any
   `model(...)` definition.
 - `isColumnDefaultExpression(value: unknown): value is ColumnDefaultExpression` —
@@ -349,7 +382,7 @@ if (isColumnDefaultExpression(d)) {
 - The type augmentation (`autoIncrement()` / `default()` on props) is visible as soon as this
   package's types are loaded — even through `import type`. The methods only exist at runtime
   after `applyPatches()` has been called.
-- The patch extends prototypes of classes from `@ts-grm/core`. If two copies of
+- The metadata/BOOL/TEXT installer extends prototypes from `@ts-grm/core`. If two copies of
   the upstream package (ESM and CJS) are loaded in one process, only one of them
   gets patched. The expression discriminator above avoids this pitfall.
 - The BOOL / TEXT query patch covers scalar properties declared directly on an entity; properties

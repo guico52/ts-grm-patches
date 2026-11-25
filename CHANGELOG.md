@@ -59,6 +59,14 @@ All notable changes to this project are documented here. The format follows
   These are JavaScript pipeline measurements with mock execution, not database
   latency guarantees; before/after data is included in the performance review.
 
+### Documentation
+
+- Reframe the English/Chinese READMEs and package description around an optional
+  ts-grm enhancement layer, with capability navigation, activation boundaries,
+  current peer/runtime requirements and Unreleased API status.
+- Add an adoption guide and a documentation-site integration proposal covering
+  an ecosystem section, versioned examples and browser-sandbox verification.
+
 ## [0.2.2] - 2026-10-25
 
 ### Added
