@@ -46,6 +46,19 @@ All notable changes to this project are documented here. The format follows
 - SQL Server trailing-space character length and integer POWER results,
   PostgreSQL decimal ROUND signatures, and explicit unsupported REVERSE errors.
 
+### Performance
+
+- Cache expression method plans by native prototype and lazily bind value
+  transforms, keeping own methods and accessor-provided methods instance-local.
+  Comparison/order chains retain their native methods; functional q.fn entries
+  remain available.
+- Reuse the dialect-validator class, reduce query setup allocations, and memoize
+  grouping shapes/analysis while still rejecting cached nested aggregates.
+- On the recorded local benchmark, grouped q.fn construction/rendering fell from
+  124–130 us to 52–54 us, and automatic grouping from 132–134 us to 59–61 us.
+  These are JavaScript pipeline measurements with mock execution, not database
+  latency guarantees; before/after data is included in the performance review.
+
 ## [0.2.2] - 2026-10-25
 
 ### Added

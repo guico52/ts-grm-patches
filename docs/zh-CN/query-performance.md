@@ -2,6 +2,8 @@
 
 核查日期：2026-11-26。生产代码基线：2260a8c，@ts-grm/core 与 @ts-grm/sql 均为 0.0.13。
 
+下文先保留优化前的测试与代码路径说明；本轮改写的实测结果见[性能优先改写后的复测](#性能优先改写后的复测)。
+
 CHANGELOG 的 Unreleased 已覆盖三次功能提交：链式查询/自动分组（8c84504）、client 方言绑定（08c7882）、方言函数实现（2260a8c）。它们尚未被标记为一个已发布版本；package.json 仍是 0.2.2。此次追加了基准工具和本报告的记录。
 
 ## 结论
@@ -60,7 +62,7 @@ BENCH_REVERSE=1 node bench/query-performance.mjs
 
 ## 代码路径与 CPU 采样
 
-源码检查和额外的 enhanced-functions CPU 采样一致：表达式增强是显著热点，查询包装、函数上下文创建、方言校验也有采样。
+以下描述优化前的代码。源码检查和额外的 enhanced-functions CPU 采样一致：表达式增强是显著热点，查询包装、函数上下文创建、方言校验也有采样。
 
 1. 每个新函数结果都检查完整的方法清单，构造 Map、闭包和属性描述符，再执行 Object.defineProperties。一个链条有多个结果对象，会重复这一步。涉及 expression-chain.ts 的 createExpressionEnhancer。
 2. 每个查询都安装 select/where/groupBy 等实例包装，并为投影再安装链式条件方法。即使没有使用增强函数，这条路径也会执行。涉及 query-enhancer.ts 的 enhanceQuery。
@@ -85,3 +87,35 @@ CPU 采样涵盖初始化、多个基准阶段和脚本主动 GC，不能用它�
 @see [方言校验与分组分析](../../src/function-semantics.ts)
 @see [BOOL/TEXT getter 回退](../../src/query-props.ts)
 @see [全局过滤器](../../src/global-filter.ts)
+
+## 性能优先改写后的复测
+
+在 be7dfd3 基础上调整实现，继续使用原基准脚本，按正序与反序各运行一轮。两轮的原生分组 render 对照为 25.9–28.0 μs，优化前为 29.4–29.8 μs，存在运行环境噪声；以下改进比例是观测值，不是剔除了所有环境差异的精确归因。
+
+| 测量项                              | 优化前，μs/次 | 优化后，μs/次 |
+| ----------------------------------- | ------------: | ------------: |
+| 增强 client，普通查询构建           |     8.78–8.97 |     2.55–2.68 |
+| q.fn SUM(amount).plus(1) 表达式构建 |   23.26–24.78 |     7.10–7.24 |
+| q.fn 分组查询构建，手写 GROUP BY    |   67.61–69.79 |   17.69–17.78 |
+| q.fn 分组查询构建及 render          | 123.62–130.07 |   51.69–53.56 |
+| q.fn 自动分组查询构建及 render      | 131.80–134.29 |   58.70–60.87 |
+
+本例 q.fn 分组构建及 render 耗时降低约 57%–60%，自动分组模式降低约 54%–56%。优化后的管线仍有额外成本；没有把结果解释为数据库查询或线上接口的加速比例。
+
+具体变化：
+
+1. 按原生 prototype 缓存原始方法和属性描述模板。实例自有方法不使用共享 plan；继承 getter 返回的实例绑定方法也不跨实例缓存。
+2. 用共享 getter 延迟创建链式方法，首次访问后缓存在表达式的 WeakMap 状态中。方法提取后仍绑定原表达式，不需要预先创建所有方法的闭包。
+3. 只为继续返回值的变换安装链式增强。比较和排序保留原生方法，q.fn 的完整函数入口及基于操作数的聚合/方言检查继续存在。
+4. DialectValidator 类移至模块级，每次调用仍新建携带方言与 seen 集合的实例，保留立即校验和 finish 校验。
+5. 查询原始方法改为直接取值，减少 setup 中的数组与 Object.fromEntries 分配。
+6. 自动分组在一次分析内缓存节点 shape 与分析结果。复用缓存时，若当前处于聚合内部且子树含聚合，仍报告 NESTED_AGGREGATE，避免缓存绕过阶段约束。
+
+描述模板缓存以 prototype 为 WeakMap key，表达式状态以表达式为 WeakMap key；没有建立按 SQL 文本增长的全局查询缓存。此次未做持续负载内存测量，不宣称具体堆占用降幅。
+
+新增回归覆盖跨 client 使用提取的方法、实例方法覆盖、继承 getter 的实例隔离和缓存下的嵌套聚合拒绝。124 项测试、TypeScript/lint、五种方言的 SQL renderer 测试、真实 SQLite 执行及 ESM/CJS 导出验证通过。基准继续对六种模式的 SQL/参数做一致性断言。
+
+client 初始化和 BOOL/TEXT 首次回退的实现未在本轮优化，不将它们计入上述收益。测量边界与前文相同：空结果模拟执行，没有真实数据库和网络等待。
+
+@see [优化后两轮原始结果及源码校验值](../../bench/results/2026-11-26-optimized.json)
+@see [延迟计算 getter 的一般机制](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/get#smart_self-overwriting_lazy_getters)

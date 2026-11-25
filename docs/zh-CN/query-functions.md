@@ -57,6 +57,8 @@ q.fn.upper(t.name).position('X').plus(1)
 
 增强只添加到表达式实例，保留 AST 对象身份、prototype 和 Visitor；不修改全局表达式原型。函数形式与链式形式进入同一函数上下文，再选择方言实现或保存的原生方法，避免相互转调造成递归。公开类型包含 ChainedStrExpression、ChainedNumExpression、ChainedDateExpression，并可传回原生表达式 API。
 
+表达式增强按原生 prototype 缓存方法描述，链式值变换在首次访问时才创建并缓存绑定方法。实例自有方法与通过 getter 返回的方法保留各自的原始实现，不会在其他实例间串用。比较与排序方法保留原生调用方式，操作数中的函数依赖仍参与方言和聚合检查；对应的 q.fn.eq、q.fn.asc 等函数入口继续提供。性能对比见[性能核查](./query-performance.md#性能优先改写后的复测)。
+
 标量子查询经 distinct 创建的新实例也继续增强，asValue 后可接 coalesce 等 SQL 函数；这不扩大 autoGroupBy 对子查询自动推导的范围。已验证的上游 0.0.13 不生成子查询 LIMIT/OFFSET，增强层会对这两种调用报告 UNSUPPORTED_SUBQUERY_PAGINATION，防止静默丢失分页；根查询的 limit/offset 不受此限制。
 
 外层 scalar 函数不会被误标成 aggregate；语义分析沿子节点保留内层聚合，因此 coalesce(avg(amount), 0) 仍按聚合结果处理。合法的标量函数嵌套可以组合；同一计算阶段的 SUM(AVG(...)) 等聚合嵌套仍由自动分组分析拒绝。

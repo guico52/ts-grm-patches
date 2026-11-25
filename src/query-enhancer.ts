@@ -152,12 +152,14 @@ function enhanceQuery(q: MutableQuery, fn: QueryFunctions, dialect: string) {
   const rowPredicates: unknown[] = []
   const having: unknown[] = []
   const orders: unknown[] = []
-  const originals = Object.fromEntries(
-    ['select', 'selectDistinct', 'groupBy', 'having', 'where', 'orderBy'].map((name) => [
-      name,
-      Reflect.get(q, name) as Call,
-    ]),
-  ) as Record<string, Call>
+  const originals = {
+    select: q.select,
+    selectDistinct: q.selectDistinct,
+    groupBy: q.groupBy,
+    having: q.having,
+    where: q.where,
+    orderBy: q.orderBy,
+  } as unknown as Record<string, Call>
   const apply = (name: string, args: readonly unknown[]) => Reflect.apply(originals[name]!, q, args)
   const assertOpen = () => {
     if (closed)

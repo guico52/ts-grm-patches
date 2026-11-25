@@ -1,0 +1,739 @@
+{
+  "date": "2026-11-26",
+  "sourceBase": "be7dfd3",
+  "sourceSha256": {
+    "src/expression-chain.ts": "e1e69e23d3553d4c68dff0bbaf52f1d29a46a18e031af987e8db389a87a9ee91",
+    "src/function-semantics.ts": "6f7579309eeca0da31a881199c49bddb6f4b67b289da23233f4f60e31f91978f",
+    "src/query-enhancer.ts": "03b4d3b31be189582b48b81599d4423ff869f0a623455c639cfd736d67bf1f23"
+  },
+  "forward": {
+    "environment": {
+      "node": "v24.15.0",
+      "platform": "linux",
+      "arch": "x64",
+      "cpu": "12th Gen Intel(R) Core(TM) i7-12700H"
+    },
+    "methodology": "7 samples, median microseconds per operation; >=40 ms per sample; warmup; GC outside timing; independent processes; native PostgreSQL renderer + empty mock executor; identical SQL and bindings checked",
+    "runs": [
+      {
+        "mode": "native",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 0.25818585319949816,
+            "minUs": 0.23642966222016767,
+            "maxUs": 0.27093411972528564,
+            "count": 121144
+          },
+          "expression": {
+            "medianUs": 0.016386555711782155,
+            "minUs": 0.015478979860843924,
+            "maxUs": 0.01816985542742869,
+            "count": 2320703
+          },
+          "build-simple": {
+            "medianUs": 0.17872445230302353,
+            "minUs": 0.169252486111634,
+            "maxUs": 0.23176819281943264,
+            "count": 79743
+          },
+          "build-grouped": {
+            "medianUs": 0.20909730107245802,
+            "minUs": 0.19475235336712501,
+            "maxUs": 0.22664715132247046,
+            "count": 233389
+          },
+          "render-simple": {
+            "medianUs": 21.308928571428602,
+            "minUs": 20.614545787545815,
+            "maxUs": 24.2320117216117,
+            "count": 2730
+          },
+          "render-grouped": {
+            "medianUs": 25.920538798498193,
+            "minUs": 25.3873723404254,
+            "maxUs": 27.123775969962526,
+            "count": 1598
+          }
+        }
+      },
+      {
+        "mode": "imported",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 0.23599739206728598,
+            "minUs": 0.22335398904789283,
+            "maxUs": 0.2575236317429583,
+            "count": 165265
+          },
+          "expression": {
+            "medianUs": 0.015908963457724495,
+            "minUs": 0.015573596620761883,
+            "maxUs": 0.01853247400180172,
+            "count": 2368818
+          },
+          "build-simple": {
+            "medianUs": 0.1542952557241159,
+            "minUs": 0.1409026196128929,
+            "maxUs": 0.17296735745040473,
+            "count": 248510
+          },
+          "build-grouped": {
+            "medianUs": 0.234821121243107,
+            "minUs": 0.19337522470152685,
+            "maxUs": 0.2949506520429747,
+            "count": 214173
+          },
+          "render-simple": {
+            "medianUs": 21.561169606512884,
+            "minUs": 21.23737449118045,
+            "maxUs": 24.679107643600194,
+            "count": 2211
+          },
+          "render-grouped": {
+            "medianUs": 27.711411832280458,
+            "minUs": 25.031024124066647,
+            "maxUs": 28.674096496266454,
+            "count": 1741
+          }
+        }
+      },
+      {
+        "mode": "patched",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 0.24575275792801385,
+            "minUs": 0.23180849606480716,
+            "maxUs": 0.3045751770013501,
+            "count": 151835
+          },
+          "expression": {
+            "medianUs": 0.01695781561973432,
+            "minUs": 0.015371406288938627,
+            "maxUs": 0.018038746848292184,
+            "count": 2355469
+          },
+          "build-simple": {
+            "medianUs": 0.16886300778081215,
+            "minUs": 0.1594774567639309,
+            "maxUs": 0.17841240225984395,
+            "count": 208333
+          },
+          "build-grouped": {
+            "medianUs": 0.2228704929710252,
+            "minUs": 0.20837345750141428,
+            "maxUs": 0.3011266996291722,
+            "count": 190924
+          },
+          "render-simple": {
+            "medianUs": 21.808701836821868,
+            "minUs": 20.726429730884195,
+            "maxUs": 22.990839812046175,
+            "count": 2341
+          },
+          "render-grouped": {
+            "medianUs": 27.7255070011668,
+            "minUs": 26.13288914819139,
+            "maxUs": 28.22433372228708,
+            "count": 1714
+          },
+          "build-bool-text": {
+            "medianUs": 10.651363255033507,
+            "minUs": 10.268540827740413,
+            "maxUs": 10.882798378076023,
+            "count": 3576
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.005161421433845092,
+            "minUs": 0.005101266096903808,
+            "maxUs": 0.005917644487244047,
+            "count": 2955382
+          }
+        }
+      },
+      {
+        "mode": "enhanced-native",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 35.21112865497078,
+            "minUs": 28.930590643274844,
+            "maxUs": 53.78988450292398,
+            "count": 684
+          },
+          "expression": {
+            "medianUs": 0.01574220291610936,
+            "minUs": 0.015609256638017393,
+            "maxUs": 0.016315207612352993,
+            "count": 2667664
+          },
+          "build-simple": {
+            "medianUs": 2.6758752597402675,
+            "minUs": 2.5394769480519463,
+            "maxUs": 3.0177892857142887,
+            "count": 15400
+          },
+          "build-grouped": {
+            "medianUs": 3.4845141410895124,
+            "minUs": 3.3198476618994195,
+            "maxUs": 3.541575526273509,
+            "count": 12446
+          },
+          "render-simple": {
+            "medianUs": 26.137980485232042,
+            "minUs": 24.585385021097093,
+            "maxUs": 28.468658227848113,
+            "count": 1896
+          },
+          "render-grouped": {
+            "medianUs": 33.21173804846106,
+            "minUs": 32.41724361493123,
+            "maxUs": 33.85947675180073,
+            "count": 1527
+          },
+          "build-bool-text": {
+            "medianUs": 14.730591022444006,
+            "minUs": 13.774049875311855,
+            "maxUs": 15.712814214463787,
+            "count": 2406
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.004879695237577614,
+            "minUs": 0.004842300107315976,
+            "maxUs": 0.005625432019602254,
+            "count": 4563161
+          }
+        }
+      },
+      {
+        "mode": "enhanced-functions",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 34.07744153846155,
+            "minUs": 32.047483076923015,
+            "maxUs": 48.53457384615384,
+            "count": 650
+          },
+          "expression": {
+            "medianUs": 7.242599764270089,
+            "minUs": 7.024470112813613,
+            "maxUs": 7.498234719649772,
+            "count": 5939
+          },
+          "build-simple": {
+            "medianUs": 3.141380528826701,
+            "minUs": 2.5756813293442278,
+            "maxUs": 3.3110621816123547,
+            "count": 12367
+          },
+          "build-grouped": {
+            "medianUs": 17.693647949218793,
+            "minUs": 17.328727050781257,
+            "maxUs": 19.488408691406335,
+            "count": 2048
+          },
+          "render-simple": {
+            "medianUs": 27.263607701564418,
+            "minUs": 27.042728640192546,
+            "maxUs": 30.72699097472918,
+            "count": 1662
+          },
+          "render-grouped": {
+            "medianUs": 53.56011910669985,
+            "minUs": 52.59629032258106,
+            "maxUs": 54.83328660049662,
+            "count": 806
+          },
+          "build-bool-text": {
+            "medianUs": 14.39855206677262,
+            "minUs": 13.69465262321148,
+            "maxUs": 15.696562798092092,
+            "count": 2516
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.005171440169085094,
+            "minUs": 0.0051472116748888935,
+            "maxUs": 0.006269744583150375,
+            "count": 4013126
+          }
+        }
+      },
+      {
+        "mode": "enhanced-auto",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 34.182283720930236,
+            "minUs": 32.06150232558138,
+            "maxUs": 45.822555038759674,
+            "count": 645
+          },
+          "expression": {
+            "medianUs": 6.93120602836879,
+            "minUs": 6.838683865248236,
+            "maxUs": 7.409258687943267,
+            "count": 5640
+          },
+          "build-simple": {
+            "medianUs": 4.8091820273972585,
+            "minUs": 4.686125917808206,
+            "maxUs": 5.13749139726027,
+            "count": 9125
+          },
+          "build-grouped": {
+            "medianUs": 22.067493119266018,
+            "minUs": 20.823399082568685,
+            "maxUs": 23.672692660550513,
+            "count": 1744
+          },
+          "render-simple": {
+            "medianUs": 30.66650805931658,
+            "minUs": 29.13596776273365,
+            "maxUs": 32.24831012250166,
+            "count": 1551
+          },
+          "render-grouped": {
+            "medianUs": 58.70328247162684,
+            "minUs": 57.71480201765474,
+            "maxUs": 60.556116015132645,
+            "count": 793
+          },
+          "build-bool-text": {
+            "medianUs": 14.730770204081711,
+            "minUs": 13.94621795918376,
+            "maxUs": 15.103228163265232,
+            "count": 2450
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.005195979686182907,
+            "minUs": 0.004981260860864346,
+            "maxUs": 0.006074780693922841,
+            "count": 2968226
+          }
+        }
+      }
+    ]
+  },
+  "reverse": {
+    "environment": {
+      "node": "v24.15.0",
+      "platform": "linux",
+      "arch": "x64",
+      "cpu": "12th Gen Intel(R) Core(TM) i7-12700H"
+    },
+    "methodology": "7 samples, median microseconds per operation; >=40 ms per sample; warmup; GC outside timing; independent processes; native PostgreSQL renderer + empty mock executor; identical SQL and bindings checked",
+    "runs": [
+      {
+        "mode": "native",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 0.24366689238113118,
+            "minUs": 0.2281398535761218,
+            "maxUs": 0.2853656373193167,
+            "count": 149156
+          },
+          "expression": {
+            "medianUs": 0.01625896237377484,
+            "minUs": 0.015167492502437076,
+            "maxUs": 0.017990359256406737,
+            "count": 2521486
+          },
+          "build-simple": {
+            "medianUs": 0.16033451323618186,
+            "minUs": 0.15078579373976025,
+            "maxUs": 0.1728178149521426,
+            "count": 231940
+          },
+          "build-grouped": {
+            "medianUs": 0.2092453798490163,
+            "minUs": 0.19697838968910322,
+            "maxUs": 0.27677732180061787,
+            "count": 221746
+          },
+          "render-simple": {
+            "medianUs": 22.75568493150682,
+            "minUs": 21.662614611872222,
+            "maxUs": 23.28023287671232,
+            "count": 2190
+          },
+          "render-grouped": {
+            "medianUs": 28.016091603053244,
+            "minUs": 26.683544920728217,
+            "maxUs": 28.639747504404014,
+            "count": 1703
+          }
+        }
+      },
+      {
+        "mode": "imported",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 0.2354153945529808,
+            "minUs": 0.22295821798623752,
+            "maxUs": 0.29219701283977956,
+            "count": 151716
+          },
+          "expression": {
+            "medianUs": 0.016513754384013198,
+            "minUs": 0.016187089776393368,
+            "maxUs": 0.017539881346206737,
+            "count": 1366328
+          },
+          "build-simple": {
+            "medianUs": 0.15921016746944977,
+            "minUs": 0.15009776670234604,
+            "maxUs": 0.16535854852377108,
+            "count": 179376
+          },
+          "build-grouped": {
+            "medianUs": 0.2130922498323535,
+            "minUs": 0.20310958653580108,
+            "maxUs": 0.27306401965795496,
+            "count": 213247
+          },
+          "render-simple": {
+            "medianUs": 22.37912383177562,
+            "minUs": 22.04562757009345,
+            "maxUs": 23.547076168224265,
+            "count": 2140
+          },
+          "render-grouped": {
+            "medianUs": 27.434934319526644,
+            "minUs": 26.13552603550289,
+            "maxUs": 28.012926627218956,
+            "count": 1690
+          }
+        }
+      },
+      {
+        "mode": "patched",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 0.2546265359819264,
+            "minUs": 0.2504447390897068,
+            "maxUs": 0.29983600810006605,
+            "count": 145184
+          },
+          "expression": {
+            "medianUs": 0.016022664379486122,
+            "minUs": 0.015326213459343688,
+            "maxUs": 0.01847439247030074,
+            "count": 1578071
+          },
+          "build-simple": {
+            "medianUs": 0.16534935815808435,
+            "minUs": 0.16255942388659814,
+            "maxUs": 0.17540392420359047,
+            "count": 184547
+          },
+          "build-grouped": {
+            "medianUs": 0.21159586941270242,
+            "minUs": 0.20796757902222923,
+            "maxUs": 0.312651211401882,
+            "count": 208106
+          },
+          "render-simple": {
+            "medianUs": 22.335498102466772,
+            "minUs": 21.863939753320704,
+            "maxUs": 23.38258823529415,
+            "count": 2108
+          },
+          "render-grouped": {
+            "medianUs": 27.95291549295786,
+            "minUs": 26.047998826291238,
+            "maxUs": 28.941026408450718,
+            "count": 1704
+          },
+          "build-bool-text": {
+            "medianUs": 10.731551724137997,
+            "minUs": 10.35064348817328,
+            "maxUs": 11.033709318894289,
+            "count": 3509
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.005186178029027831,
+            "minUs": 0.005174376210233004,
+            "maxUs": 0.005950140857251483,
+            "count": 3769419
+          }
+        }
+      },
+      {
+        "mode": "enhanced-native",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 34.208157986111075,
+            "minUs": 31.700932291666618,
+            "maxUs": 46.1171979166667,
+            "count": 576
+          },
+          "expression": {
+            "medianUs": 0.01685928989214454,
+            "minUs": 0.015875113173356614,
+            "maxUs": 0.017852862926904925,
+            "count": 2263121
+          },
+          "build-simple": {
+            "medianUs": 2.5465148201266885,
+            "minUs": 2.4850326281821413,
+            "maxUs": 2.971621967252301,
+            "count": 16734
+          },
+          "build-grouped": {
+            "medianUs": 3.1786307574009878,
+            "minUs": 3.0111910034602056,
+            "maxUs": 3.4132170703575686,
+            "count": 13005
+          },
+          "render-simple": {
+            "medianUs": 28.142023479188847,
+            "minUs": 26.07016275346854,
+            "maxUs": 30.831101921024587,
+            "count": 1874
+          },
+          "render-grouped": {
+            "medianUs": 33.6989281326782,
+            "minUs": 32.97063144963153,
+            "maxUs": 34.100064496314495,
+            "count": 1628
+          },
+          "build-bool-text": {
+            "medianUs": 14.75282831858419,
+            "minUs": 13.59116548672568,
+            "maxUs": 14.992715929203559,
+            "count": 2260
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.005097281627730642,
+            "minUs": 0.004962835371097459,
+            "maxUs": 0.0055884160318243345,
+            "count": 2988406
+          }
+        }
+      },
+      {
+        "mode": "enhanced-functions",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 35.160643423137905,
+            "minUs": 31.799583201267748,
+            "maxUs": 45.87933438985737,
+            "count": 631
+          },
+          "expression": {
+            "medianUs": 7.104206781447644,
+            "minUs": 6.735736999297267,
+            "maxUs": 7.356324841883339,
+            "count": 5692
+          },
+          "build-simple": {
+            "medianUs": 3.20446884542379,
+            "minUs": 2.7702320706445516,
+            "maxUs": 3.6483730296278,
+            "count": 12117
+          },
+          "build-grouped": {
+            "medianUs": 17.783743362831853,
+            "minUs": 16.7757494177923,
+            "maxUs": 18.639189101071352,
+            "count": 2147
+          },
+          "render-simple": {
+            "medianUs": 26.637783407572375,
+            "minUs": 25.817340757238348,
+            "maxUs": 29.141062360801794,
+            "count": 1796
+          },
+          "render-grouped": {
+            "medianUs": 51.68690322580634,
+            "minUs": 50.574096774193315,
+            "maxUs": 65.58705069124429,
+            "count": 868
+          },
+          "build-bool-text": {
+            "medianUs": 14.657667695019875,
+            "minUs": 13.859634200088129,
+            "maxUs": 14.79588981930375,
+            "count": 2269
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.005163117131867257,
+            "minUs": 0.0050658211629098105,
+            "maxUs": 0.006161990304786841,
+            "count": 3955354
+          }
+        }
+      },
+      {
+        "mode": "enhanced-auto",
+        "sql": [
+          {
+            "text": "select tb_1_.ID, tb_1_.NAME from BENCH_SALE tb_1_ where tb_1_.ID > $1",
+            "values": [0]
+          },
+          {
+            "text": "select upper(lower(tb_1_.NAME)), sum(tb_1_.AMOUNT) + $1 from BENCH_SALE tb_1_ where tb_1_.ID > $2 group by upper(lower(tb_1_.NAME))",
+            "values": [1, 0]
+          }
+        ],
+        "results": {
+          "client-create": {
+            "medianUs": 35.057036065573776,
+            "minUs": 32.7212180327869,
+            "maxUs": 46.46313114754099,
+            "count": 610
+          },
+          "expression": {
+            "medianUs": 7.115383074935411,
+            "minUs": 6.850029285099039,
+            "maxUs": 7.6393298880275555,
+            "count": 4644
+          },
+          "build-simple": {
+            "medianUs": 4.881292050116418,
+            "minUs": 4.6641230735114805,
+            "maxUs": 5.059524891894886,
+            "count": 9019
+          },
+          "build-grouped": {
+            "medianUs": 21.344999462076427,
+            "minUs": 20.737174825174858,
+            "maxUs": 21.92145024206563,
+            "count": 1859
+          },
+          "render-simple": {
+            "medianUs": 31.77704263093782,
+            "minUs": 29.79939098660165,
+            "maxUs": 32.900398294762574,
+            "count": 1642
+          },
+          "render-grouped": {
+            "medianUs": 60.872896153846455,
+            "minUs": 57.645061538461896,
+            "maxUs": 69.41626923076933,
+            "count": 780
+          },
+          "build-bool-text": {
+            "medianUs": 14.43386071428572,
+            "minUs": 13.828984920635031,
+            "maxUs": 15.625077380952412,
+            "count": 2520
+          },
+          "read-cached-bool-text": {
+            "medianUs": 0.0052214784351317005,
+            "minUs": 0.005185336793849116,
+            "maxUs": 0.006055869117288606,
+            "count": 4180109
+          }
+        }
+      }
+    ]
+  }
+}

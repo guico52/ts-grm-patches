@@ -886,6 +886,83 @@ describe('q.fn native API extensions', () => {
     })
   })
 
+  it('keeps bound value transforms stable when extracted and used through another context', async () => {
+    const { client, statements } = capture()
+    const { client: other, statements: otherStatements } = capture()
+    const value = client.fn.constant(3)
+    const plus = value.plus
+    expect(value.plus).toBe(plus)
+    await other
+      .createQuery(SALES, (q, t) =>
+        q.select({ first: plus(2).abs(), second: q.fn.plus(value, 4).round() }).where(t.id.eq(1)),
+      )
+      .fetchList()
+    expect(statements).toHaveLength(0)
+    expect(otherStatements[0]!.text).toContain('abs(')
+    expect(otherStatements[0]!.text).toContain('round(')
+    expect(otherStatements[0]!.values).toEqual([2, 4, 1])
+    expect(getFunctionMetadata(plus(2))?.kind).toBe('scalar')
+  })
+
+  it('keeps own native method overrides isolated from cached prototype plans', async () => {
+    const { client, statements } = capture()
+    client.fn.constant(1).plus(1) // Warm the ordinary prototype plan first.
+    const custom = dsl.constant(1)
+    let calls = 0
+    Object.defineProperty(custom, 'plus', {
+      configurable: true,
+      value() {
+        calls++
+        return dsl.constant(42)
+      },
+    })
+    const enhanced = client.fn.scalar(custom)
+    expect(enhanced).toBe(custom)
+    await client
+      .createQuery(SALES, (q) =>
+        q.select({ custom: enhanced.plus(2), ordinary: q.fn.constant(1).plus(2) }),
+      )
+      .fetchList()
+    expect(calls).toBe(1)
+    expect(statements[0]!.text).toContain('42')
+    expect(statements[0]!.values).toEqual([2])
+    const readOnly = dsl.constant(1)
+    Object.defineProperty(readOnly, 'plus', { value: readOnly.plus, configurable: false })
+    expect(() => client.fn.scalar(readOnly)).toThrow('read-only expression method plus')
+  })
+
+  it('does not reuse outside-aggregate analysis to allow cached nested aggregates', () => {
+    const { client } = capture()
+    expect(() =>
+      client.createQuery(SALES, (q, t) => {
+        const shared = q.fn.sum(t.amount).plus(t.tax)
+        return q.autoGroupBy().select({ shared, invalid: q.fn.sum(shared) })
+      }),
+    ).toThrow('NESTED_AGGREGATE')
+    expect(() =>
+      client.createQuery(SALES, (q, t) => {
+        const shared = q.fn.sum(t.amount)
+        return q.autoGroupBy().select({ shared, invalid: q.fn.sum(shared) })
+      }),
+    ).toThrow('NESTED_AGGREGATE')
+  })
+
+  it('does not share instance-bound originals supplied by inherited accessors', () => {
+    const { client } = capture()
+    const first = dsl.constant(2)
+    const second = dsl.constant(3)
+    const prototype = Object.create(Object.getPrototypeOf(first)) as object
+    Object.defineProperty(prototype, 'unaryMinus', {
+      get(this: object) {
+        return () => this
+      },
+    })
+    Object.setPrototypeOf(first, prototype)
+    Object.setPrototypeOf(second, prototype)
+    expect(client.fn.scalar(first).unaryMinus()).toBe(first)
+    expect(client.fn.scalar(second).unaryMinus()).toBe(second)
+  })
+
   it('validates structural units and argument counts', () => {
     const { client } = capture([], 'mysql')
     expect(() =>

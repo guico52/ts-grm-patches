@@ -122,50 +122,53 @@ function shapeOf(node: spi.Node): Shape {
   return shape
 }
 
-/** Validate provenance independently of autoGroupBy; raw SQL remains opaque. */
-export function validateFunctionDialects(values: readonly unknown[], dialect: string): void {
-  class Validator extends spi.AbstractVisitor {
-    private readonly seen = new WeakSet<object>()
-    override visitNativeExpr(expr: spi.NativeExprContract): void {
-      const source = getFunctionMetadata(expr)
-      if (source?.dialect !== undefined && source.dialect !== dialect) {
-        throw new QuerySemanticError(
-          'DIALECT_MISMATCH',
-          `${source.dialect} expression used with ${dialect}`,
-        )
-      }
-      super.visitNativeExpr(expr)
+class DialectValidator extends spi.AbstractVisitor {
+  constructor(private readonly dialect: string) {
+    super()
+  }
+  private readonly seen = new WeakSet<object>()
+  override visitNativeExpr(expr: spi.NativeExprContract): void {
+    const source = getFunctionMetadata(expr)
+    if (source?.dialect !== undefined && source.dialect !== this.dialect) {
+      throw new QuerySemanticError(
+        'DIALECT_MISMATCH',
+        `${source.dialect} expression used with ${this.dialect}`,
+      )
     }
-    override visitShadowExpr(expr: spi.ShadowExprContract): void {
-      const original = expr.anchor.original
-      if (isExpression(original) && !this.seen.has(original)) {
-        this.seen.add(original)
-        original.accept(this)
-      }
-    }
-    override visitAtomQuery(query: spi.AtomQueryContract): void {
-      if (this.seen.has(query)) return
-      this.seen.add(query)
-      super.visitAtomQuery(query)
-      const projection = query.projection
-      const selections =
-        'selection' in projection
-          ? [projection.selection]
-          : 'selections' in projection
-            ? Object.values(projection.selections)
-            : Object.values(projection.args)
-      for (const selection of selections) if (isExpression(selection)) selection.accept(this)
-    }
-    override visitLikePred(pred: spi.LikePred): void {
-      super.visitLikePred(pred)
-      pred.pattern.accept(this)
-    }
-    override visitInCollectionPred(pred: spi.InCollectionPred<unknown>): void {
-      super.visitInCollectionPred(pred)
-      for (const value of pred.values) value.accept(this)
+    super.visitNativeExpr(expr)
+  }
+  override visitShadowExpr(expr: spi.ShadowExprContract): void {
+    const original = expr.anchor.original
+    if (isExpression(original) && !this.seen.has(original)) {
+      this.seen.add(original)
+      original.accept(this)
     }
   }
-  const validator = new Validator()
+  override visitAtomQuery(query: spi.AtomQueryContract): void {
+    if (this.seen.has(query)) return
+    this.seen.add(query)
+    super.visitAtomQuery(query)
+    const projection = query.projection
+    const selections =
+      'selection' in projection
+        ? [projection.selection]
+        : 'selections' in projection
+          ? Object.values(projection.selections)
+          : Object.values(projection.args)
+    for (const selection of selections) if (isExpression(selection)) selection.accept(this)
+  }
+  override visitLikePred(pred: spi.LikePred): void {
+    super.visitLikePred(pred)
+    pred.pattern.accept(this)
+  }
+  override visitInCollectionPred(pred: spi.InCollectionPred<unknown>): void {
+    super.visitInCollectionPred(pred)
+    for (const value of pred.values) value.accept(this)
+  }
+}
+/** Validate provenance independently of autoGroupBy; raw SQL remains opaque. */
+export function validateFunctionDialects(values: readonly unknown[], dialect: string): void {
+  const validator = new DialectValidator(dialect)
   for (const value of values) {
     const expression = value instanceof ExpressionOrder ? value.expression : value
     if (isExpression(expression)) expression.accept(validator)
@@ -188,8 +191,24 @@ export function inferGroupBy(
   dialect: string,
 ): readonly ExpressionLike[] {
   const cache = new Map<spi.Node, Analysis>()
+  const shapes = new Map<spi.Node, Shape>()
+  const shapeOfCached = (node: spi.Node): Shape => {
+    let shape = shapes.get(node)
+    if (shape === undefined) {
+      shape = shapeOf(node)
+      shapes.set(node, shape)
+    }
+    return shape
+  }
   const analyze = (node: spi.Node, insideAggregate = false): Analysis => {
-    const shape = shapeOf(node)
+    const cached = cache.get(node)
+    if (cached !== undefined) {
+      // A subtree valid outside an aggregate may become nested inside one.
+      if (insideAggregate && cached.aggregate)
+        throw new QuerySemanticError('NESTED_AGGREGATE', 'Same-stage aggregate nesting is invalid')
+      return cached
+    }
+    const shape = shapeOfCached(node)
     if (shape.dialect !== undefined && shape.dialect !== dialect) {
       throw new QuerySemanticError(
         'DIALECT_MISMATCH',
@@ -248,8 +267,8 @@ export function inferGroupBy(
     const x = a as Partial<spi.PropExprContract>
     const y = b as Partial<spi.PropExprContract>
     if (x.prop !== undefined && x.table === y.table && x.prop === y.prop) return true
-    const left = shapeOf(a)
-    const right = shapeOf(b)
+    const left = shapeOfCached(a)
+    const right = shapeOfCached(b)
     // Only proven immutable unary operations; never compare rendered SQL text.
     return (
       left.method === right.method &&
@@ -267,7 +286,7 @@ export function inferGroupBy(
   const keys: spi.Node[] = []
   const collectKeys = (node: spi.Node): void => {
     const result = cache.get(node)!
-    if (shapeOf(node).aggregate) return
+    if (shapeOfCached(node).aggregate) return
     if (!result.aggregate) {
       if (!result.column) return
       if (result.bound)
@@ -280,7 +299,7 @@ export function inferGroupBy(
   }
   selected.forEach(collectKeys)
   const covered = (node: spi.Node): boolean => {
-    if (keys.some((key) => sameKey(key, node)) || shapeOf(node).aggregate) return true
+    if (keys.some((key) => sameKey(key, node)) || shapeOfCached(node).aggregate) return true
     const result = cache.get(node)!
     if (!result.column) return true
     return result.children.length > 0 && result.children.every(covered)
