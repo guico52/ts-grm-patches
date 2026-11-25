@@ -55,6 +55,8 @@ await db
 
 select 后可以继续链式调用 where 等条件方法，在回调结束时统一定稿；q.fn 的返回值也会逐步增强，支持 SQL 函数嵌套并保留类型和聚合依赖。
 
+新建 client 可从本包或 ts-grm-patches/postgres 等方言子路径导入 newSqlClient，创建时即绑定原生 driver 对应的数据库类别，只暴露匹配的函数命名空间，并在派生 client 时保留绑定。详见[创建时绑定数据库方言](./dialect-clients.md)。
+
 ## 上游 issue
 
 ts-grm 中部分尚未修复的 issue 可以从外部绕过。每一处绕过都先交给上游处理，上游修复后

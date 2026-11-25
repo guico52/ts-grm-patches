@@ -1,6 +1,6 @@
-import { QuerySemanticError } from './function-semantics'
 import { callParts, sqlArgument, sqlExpression } from './sql-function'
 import type { SqlArgument, SqlFunctionResult, SqlResult } from './sql-function'
+import type { Dialect } from './dialect-context'
 
 type Spec<R extends SqlResult = SqlResult> = {
   sql: string
@@ -133,18 +133,19 @@ export interface DialectFunctions {
   readonly oracle: Namespace<typeof oracle>
 }
 
-export function createDialectFunctions(active: string): DialectFunctions {
+/** An unknown/union family exposes no individual namespace until it is bound. */
+export type DialectFunctionsFor<D extends Dialect> = {
+  readonly [K in Dialect as [D] extends [K] ? K : never]: DialectFunctions[K]
+}
+
+export function createDialectFunctions<D extends Dialect>(active: D): DialectFunctionsFor<D> {
   const namespaces: Record<string, unknown> = {}
   for (const [dialect, specs] of Object.entries({ postgres, mysql, sqlite, sqlserver, oracle })) {
-    const assertDialect = () => {
-      if (active !== dialect)
-        throw new QuerySemanticError('DIALECT_MISMATCH', `${dialect} function used with ${active}`)
-    }
+    if (dialect !== active) continue
     const namespace: Record<string, unknown> = {}
     for (const [name, value] of Object.entries(specs)) {
       const entry: Spec = value
       namespace[name] = (...args: SqlArgument[]) => {
-        assertDialect()
         if (args.length < entry.min || (entry.max !== undefined && args.length > entry.max))
           throw new TypeError(`${dialect}.${name}: invalid argument count`)
         let parts = [
@@ -179,7 +180,6 @@ export function createDialectFunctions(active: string): DialectFunctions {
       definition: SqlFunctionDefinition<R>,
       ...args: SqlArgument[]
     ) => {
-      assertDialect()
       if (!/^[a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*$/.test(definition.name))
         throw new TypeError('Invalid SQL function identifier')
       if (
@@ -197,7 +197,6 @@ export function createDialectFunctions(active: string): DialectFunctions {
     }
     if (dialect === 'sqlserver') {
       namespace.tryConvert = (type: string, value: SqlArgument, style?: number) => {
-        assertDialect()
         if (!['int', 'bigint', 'float', 'date', 'datetime2'].includes(type))
           throw new TypeError('Invalid TRY_CONVERT type')
         const args = style === undefined ? [value] : [value, style]
@@ -212,5 +211,5 @@ export function createDialectFunctions(active: string): DialectFunctions {
     }
     namespaces[dialect] = Object.freeze(namespace)
   }
-  return Object.freeze(namespaces) as unknown as DialectFunctions
+  return Object.freeze(namespaces) as unknown as DialectFunctionsFor<D>
 }

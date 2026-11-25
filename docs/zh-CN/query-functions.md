@@ -2,6 +2,8 @@
 
 `enhanceClient(client)` 为指定的原生 ts-grm client 添加函数上下文，并在其查询回调中添加 `q.fn` 和 `q.autoGroupBy()`。返回值仍然是同一个 client；请使用返回值获得增强后的 TypeScript 类型。
 
+新建 client 推荐使用本包的 newSqlClient 工厂，在创建时绑定数据库类别，获得公共函数与当前方言命名空间的精确类型；参见[创建时绑定数据库方言](./dialect-clients.md)。根入口 enhanceClient 接收类型已擦除的原生 SqlClient 时，只静态暴露公共函数；通过对应方言子路径的 enhanceClient 校验后可恢复精确类型。
+
 ```ts
 import { enhanceClient } from 'ts-grm-patches'
 
@@ -111,7 +113,7 @@ q.fn.sum(t.amount, { as: 'string' }) // string | null
 
 ## 五库专有函数
 
-所有命名空间都随函数上下文提供；调用与当前 client 不同的方言函数会立即抛出 `DIALECT_MISMATCH`。
+创建或增强后，函数上下文只包含当前数据库的命名空间。已知方言类型会在编译时拒绝其他命名空间；运行时也没有那些属性。把其他方言的表达式带入查询时，语义检查会抛出 DIALECT_MISMATCH。
 
 | 命名空间       | 本轮内置函数                                                                                                           |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------- |

@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Dialect-bound `newSqlClient` factories at the root and postgres/mysql/sqlite/
+  sqlserver/oracle entries, with checked existing-client binding, driver-based type
+  inference, and specialization preserved through projections and nested queries.
+- Derived-client binding inheritance and immutable explicit server-version and
+  capability declarations. Only the matching dialect namespace is exposed.
+- Package-export verification of shared binding and expression metadata across
+  root and dialect entry points in both ESM and CJS.
+
 - `enhanceClient(client)`: native-client query extensions with `client.fn`, `q.fn`,
   semantic function metadata, and opt-in `q.autoGroupBy()`.
 - Functional entry points for the installed upstream DSL and expression methods,

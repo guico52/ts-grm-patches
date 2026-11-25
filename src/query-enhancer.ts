@@ -35,79 +35,96 @@ import {
 import { createQueryFunctions } from './query-functions'
 import type { QueryFunctions } from './query-functions'
 import type { ChainedExpression, ChainedNumExpression } from './expression-chain'
+import { createDialectProfile, resolveDriverFamily } from './dialect-context'
+import type { Dialect, DialectOptions, DialectProfile } from './dialect-context'
+import type { newSqlClient as nativeNewSqlClient } from '@ts-grm/sql'
 
 type Model = AnyModel | BaseModel<BaseQuerySelectMapArgs> | AnyAssociationModel
 type Tables<M extends readonly Model[]> = { [K in keyof M]: Table<M[K]> }
 type SubTables<M extends readonly Model[]> = { [K in keyof M]: Table<M[K], 'ARBITRARY'> }
 
-export interface QueryExtensions {
-  readonly fn: QueryFunctions
+export interface QueryExtensions<D extends Dialect = Dialect> {
+  readonly fn: QueryFunctions<D>
   /** Infer keys when the query callback completes. */
   autoGroupBy(): this
 }
-export interface QueryConditions extends QueryExtensions {
+export interface QueryConditions<D extends Dialect = Dialect> extends QueryExtensions<D> {
   where(...predicates: readonly (Predicate | null | undefined)[]): this
   having(...predicates: readonly (Predicate | null | undefined)[]): this
   orderBy(...orders: readonly (ExpressionLike | ExpressionOrder)[]): this
   groupBy(...expressions: readonly ExpressionLike[]): this
 }
 /** The native projection with conditions bound to its owning query callback. */
-export type SelectedQuery<P> = P & QueryConditions
-type MutableWithoutSelect<Q> = Omit<Q, 'select' | 'selectDistinct' | keyof QueryConditions> &
-  QueryConditions
-interface RootSelect {
-  <T extends SelectionLike>(selection: T): SelectedQuery<RootQueryProjection<T, 'ONE'>>
+export type SelectedQuery<P, D extends Dialect = Dialect> = P & QueryConditions<D>
+type MutableWithoutSelect<Q, D extends Dialect> = Omit<
+  Q,
+  'select' | 'selectDistinct' | keyof QueryConditions
+> &
+  QueryConditions<D>
+interface RootSelect<D extends Dialect> {
+  <T extends SelectionLike>(selection: T): SelectedQuery<RootQueryProjection<T, 'ONE'>, D>
   <const T extends RootQuerySelectArrArgs>(
     ...selections: T
-  ): SelectedQuery<RootQueryProjection<T, 'ARRAY'>>
+  ): SelectedQuery<RootQueryProjection<T, 'ARRAY'>, D>
   <const T extends RootQuerySelectMapArgs>(
     selections: T,
-  ): SelectedQuery<RootQueryProjection<T, 'MAP'>>
+  ): SelectedQuery<RootQueryProjection<T, 'MAP'>, D>
 }
-interface SubSelect {
+interface SubSelect<D extends Dialect> {
   <const T extends SubQuerySelectArrArgs>(
     ...expressions: T
-  ): SelectedQuery<SubQueryProjection<T, 'TUPLE'>>
-  <T extends ExpressionLike>(expression: T): SelectedQuery<SubQueryProjection<T, 'EXPRESSION'>>
+  ): SelectedQuery<SubQueryProjection<T, 'TUPLE'>, D>
+  <T extends ExpressionLike>(expression: T): SelectedQuery<SubQueryProjection<T, 'EXPRESSION'>, D>
 }
-interface BaseSelect {
-  <const T extends BaseQuerySelectMapArgs>(selection: T): SelectedQuery<BaseQueryProjection<T>>
+interface BaseSelect<D extends Dialect> {
+  <const T extends BaseQuerySelectMapArgs>(selection: T): SelectedQuery<BaseQueryProjection<T>, D>
 }
-export type EnhancedMutableRootQuery = MutableWithoutSelect<MutableRootQuery> & {
-  select: RootSelect
-  selectDistinct: RootSelect
+export type EnhancedMutableRootQuery<D extends Dialect = Dialect> = MutableWithoutSelect<
+  MutableRootQuery,
+  D
+> & {
+  select: RootSelect<D>
+  selectDistinct: RootSelect<D>
 }
-export type EnhancedMutableSubQuery = MutableWithoutSelect<MutableSubQuery> & {
-  select: SubSelect
-  selectDistinct: SubSelect
+export type EnhancedMutableSubQuery<D extends Dialect = Dialect> = MutableWithoutSelect<
+  MutableSubQuery,
+  D
+> & {
+  select: SubSelect<D>
+  selectDistinct: SubSelect<D>
 }
-export type EnhancedMutableBaseQuery = MutableWithoutSelect<MutableBaseQuery> & {
-  select: BaseSelect
-  selectDistinct: BaseSelect
+export type EnhancedMutableBaseQuery<D extends Dialect = Dialect> = MutableWithoutSelect<
+  MutableBaseQuery,
+  D
+> & {
+  select: BaseSelect<D>
+  selectDistinct: BaseSelect<D>
 }
 
-export interface EnhancedQueryCreator {
+export interface EnhancedQueryCreator<D extends Dialect = Dialect> {
   <const M extends AtLeastOne<Model>, P extends RootQueryProjection<unknown>>(
-    ...args: [...models: M, fn: (q: EnhancedMutableRootQuery, ...tables: Tables<M>) => P]
+    ...args: [...models: M, fn: (q: EnhancedMutableRootQuery<D>, ...tables: Tables<M>) => P]
   ): AtomRootQuery<P>
 }
-export interface EnhancedBaseQueryCreator {
+export interface EnhancedBaseQueryCreator<D extends Dialect = Dialect> {
   <const M extends AtLeastOne<Model>, P extends BaseQueryProjection<BaseQuerySelectMapArgs>>(
-    ...args: [...models: M, fn: (q: EnhancedMutableBaseQuery, ...tables: Tables<M>) => P]
+    ...args: [...models: M, fn: (q: EnhancedMutableBaseQuery<D>, ...tables: Tables<M>) => P]
   ): AtomBaseQuery<P>
 }
-export interface EnhancedSubQueryCreator {
+export interface EnhancedSubQueryCreator<D extends Dialect = Dialect> {
   <const M extends AtLeastOne<Model>, P extends SubQueryProjection<unknown> | void>(
-    ...args: [...models: M, fn: (q: EnhancedMutableSubQuery, ...tables: SubTables<M>) => P]
+    ...args: [...models: M, fn: (q: EnhancedMutableSubQuery<D>, ...tables: SubTables<M>) => P]
   ): P extends SubQueryProjection<infer E, infer K>
     ? K extends 'EXPRESSION'
       ? AtomExpressionSubQuery<ChainedExpression<E>>
       : AtomTupleSubQuery<E>
     : AtomExpressionSubQuery<ChainedNumExpression<number>>
 }
-export type EnhancedSqlClient = Omit<SqlClient, 'createQuery'> & {
-  readonly fn: QueryFunctions
-  createQuery: EnhancedQueryCreator
+export type EnhancedSqlClient<D extends Dialect = Dialect> = Omit<SqlClient, 'createQuery'> & {
+  readonly dialect: D
+  readonly dialectProfile: DialectProfile<D>
+  readonly fn: QueryFunctions<D>
+  createQuery: EnhancedQueryCreator<D>
 }
 
 type MutableQuery = MutableRootQuery | MutableBaseQuery | MutableSubQuery
@@ -259,17 +276,74 @@ function enhanceQuery(q: MutableQuery, fn: QueryFunctions, dialect: string) {
   }
 }
 
-const enhanced = new WeakMap<object, EnhancedSqlClient>()
+type NativeDriver = Exclude<Parameters<typeof nativeNewSqlClient>[0], SqlClient>
+export interface BoundClientSource {
+  readonly dialect: Dialect
+  readonly createQuery: (...args: never[]) => unknown
+}
+interface ClientBinding {
+  readonly driver: NativeDriver
+  readonly profile: DialectProfile
+  readonly client: EnhancedSqlClient
+}
+const enhanced = new WeakMap<object, ClientBinding>()
+
+/** Internal binding lookup also guards against mutation of the native driver. */
+export function getClientBinding(client: object): ClientBinding | undefined {
+  const binding = enhanced.get(client)
+  if (
+    binding &&
+    (Reflect.get(client, 'driver') !== binding.driver ||
+      binding.driver.name !== binding.profile.driverName)
+  ) {
+    throw new QuerySemanticError(
+      'CLIENT_DRIVER_CHANGED',
+      'A bound client cannot change its native driver',
+    )
+  }
+  return binding
+}
 
 /** Adds q.fn and q.autoGroupBy to this native client; never replaces QueryFactory.
  * Driver access is deliberately isolated to the verified @ts-grm/sql 0.0.13 boundary.
  * @see https://github.com/babyfish-ct/ts-grm/blob/8c89604b65922b4626df4e3b8a74d509338ea5b7/packages/sql/src/impl/sql_client_impl.ts
  */
-export function enhanceClient(client: SqlClient): EnhancedSqlClient {
-  const existing = enhanced.get(client)
-  if (existing) return existing
+export function enhanceClient<const T extends BoundClientSource>(
+  client: T,
+): EnhancedSqlClient<T['dialect']>
+export function enhanceClient(client: SqlClient): EnhancedSqlClient
+export function enhanceClient<D extends Dialect>(
+  client: SqlClient | BoundClientSource,
+  expected: D,
+  options?: DialectOptions,
+): EnhancedSqlClient<D>
+export function enhanceClient(
+  client: object,
+  expected?: Dialect,
+  options: DialectOptions = {},
+): unknown {
+  const driver = Reflect.get(client, 'driver') as NativeDriver | undefined
+  const dialect = resolveDriverFamily(driver)
+  if (expected !== undefined && dialect !== expected)
+    throw new QuerySemanticError(
+      'DIALECT_MISMATCH',
+      `${expected} binding cannot use a ${dialect} driver`,
+    )
+  const existing = getClientBinding(client)
+  if (existing) {
+    const requested = createDialectProfile(dialect, driver!.name, options, existing.profile)
+    if (JSON.stringify(requested) !== JSON.stringify(existing.profile)) {
+      throw new QuerySemanticError(
+        'CLIENT_ALREADY_BOUND',
+        'Derive a new client to change dialect declarations',
+      )
+    }
+    return existing.client
+  }
   if (
     'fn' in client ||
+    'dialect' in client ||
+    'dialectProfile' in client ||
     !Object.isExtensible(client) ||
     Object.getOwnPropertyDescriptor(client, 'createQuery')?.configurable === false
   ) {
@@ -278,18 +352,11 @@ export function enhanceClient(client: SqlClient): EnhancedSqlClient {
       'Client must permit fn and createQuery extensions',
     )
   }
-  const driver = Reflect.get(client, 'driver') as { name?: unknown } | undefined
-  const name = driver?.name
-  const dialect = typeof name === 'string' ? name.toLowerCase().replace(/\d+$/, '') : ''
-  if (!['postgres', 'mysql', 'sqlite', 'sqlserver', 'oracle'].includes(dialect)) {
-    throw new QuerySemanticError(
-      'UNSUPPORTED_CLIENT',
-      'Expected a native ts-grm client with a supported SQL driver',
-    )
-  }
+  const profile = createDialectProfile(dialect, driver!.name, options)
   const adapt =
     (create: Call, receiver: unknown) =>
     (...args: unknown[]) => {
+      getClientBinding(client)
       const callback = args.at(-1)
       if (typeof callback !== 'function') throw new TypeError('Expected query callback')
       return Reflect.apply(create, receiver, [
@@ -309,17 +376,19 @@ export function enhanceClient(client: SqlClient): EnhancedSqlClient {
   const functions = createQueryFunctions(
     adapt(dsl.subQuery as Call, undefined),
     adapt(dsl.baseQuery as Call, undefined),
-    dialect,
+    profile,
   )
   Object.defineProperties(client, {
+    dialect: { value: dialect },
+    dialectProfile: { value: profile },
     fn: { value: functions },
     createQuery: {
-      value: adapt(client.createQuery as Call, client),
+      value: adapt(Reflect.get(client, 'createQuery') as Call, client),
       configurable: true,
       writable: true,
     },
   })
   const result = client as unknown as EnhancedSqlClient
-  enhanced.set(client, result)
+  enhanced.set(client, { client: result, driver: driver!, profile })
   return result
 }

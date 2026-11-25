@@ -1,5 +1,19 @@
 export { applyPatches } from './apply-patches'
 export { enhanceClient } from './query-enhancer'
+export { newSqlClient } from './client-factory'
+export type {
+  NativeClientOptions,
+  SupportedDriver,
+  DialectDriverMap,
+  SourceDialect,
+} from './client-factory'
+export type {
+  Dialect,
+  DialectOptions,
+  DialectProfile,
+  ServerVersion,
+  DialectCapabilities,
+} from './dialect-context'
 export type {
   EnhancedSqlClient,
   EnhancedMutableRootQuery,

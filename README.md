@@ -66,6 +66,12 @@ metadata; grouping follows full scalar expressions and excludes aggregate inputs
 Selections support chained conditions inside the query callback, and function results
 support recursive SQL-function chains while preserving aggregate dependencies.
 
+For creation-time dialect binding, import `newSqlClient` from this package or a
+dialect entry such as `ts-grm-patches/postgres`. The factory reuses native drivers
+and exposes only the matching function namespace, including in projections and
+nested queries. Derived clients retain their binding and native options.
+See [dialect-bound clients](docs/zh-CN/dialect-clients.md).
+
 See [query functions, dialect catalog, and inference limits](docs/zh-CN/query-functions.md).
 This feature does not repair upstream aggregate counting or promise full cross-database
 function equivalence.
@@ -361,6 +367,7 @@ pnpm typecheck      # tsc --noEmit
 pnpm lint           # ESLint
 pnpm format         # Prettier
 pnpm test           # vitest run (includes end-to-end: real model → createSchema() → column metadata)
+pnpm test:exports   # build and verify all ESM/CJS dialect entry points together
 pnpm coverage       # test coverage
 pnpm build          # build to dist/ (ESM + CJS + d.ts)
 ```

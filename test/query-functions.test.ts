@@ -1,10 +1,21 @@
 import { EntityManager, dsl, model, prop, spi } from '@ts-grm/core'
 import type { NumExpression } from '@ts-grm/core'
-import { newSqlClient, PostgresDriver, SqliteDriver } from '@ts-grm/sql'
+import {
+  newSqlClient,
+  PostgresDriver,
+  MySqlDriver,
+  SqliteDriver,
+  SqlServer2012Driver,
+  Oracle12Drivier,
+  FilterManager,
+} from '@ts-grm/sql'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { enhanceClient, getFunctionMetadata } from '../src/index'
+import { enhanceClient, getFunctionMetadata, newSqlClient as deriveClient } from '../src/index'
+import { newSqlClient as newSqliteClient } from '../src/sqlite'
 import type { ChainedNumExpression, ChainedStrExpression, QueryConditions } from '../src/index'
+import type { Dialect, DialectFunctions, EnhancedSqlClient, QueryFunctions } from '../src/index'
+import { driverFamily } from '../src/dialect-context'
 
 const SALES = model(
   'FunctionSale',
@@ -19,27 +30,46 @@ const SALES = model(
   },
 )
 
-function capture(rows: unknown[][] = [], dialect?: string) {
+interface Capture<D extends Dialect> {
+  original: ReturnType<typeof newSqlClient>
+  client: EnhancedSqlClient<D>
+  statements: { text: string; values: unknown[] }[]
+}
+function capture(rows?: unknown[][]): Capture<'postgres'>
+function capture(rows: unknown[][], dialect: 'postgres'): Capture<'postgres'>
+function capture(rows: unknown[][], dialect: 'mysql'): Capture<'mysql'>
+function capture(rows: unknown[][], dialect: 'sqlite'): Capture<'sqlite'>
+function capture(rows: unknown[][], dialect: string): Capture<Dialect>
+function capture(rows: unknown[][] = [], dialect = 'postgres'): unknown {
   const statements: { text: string; values: unknown[] }[] = []
-  const query = (config: { text: string; values: unknown[] }) => {
-    statements.push({ text: config.text.replace(/\s+/g, ' ').trim(), values: config.values })
-    return { rows, rowCount: rows.length, fields: [] }
+  const drivers = {
+    postgres: PostgresDriver,
+    mysql: MySqlDriver,
+    sqlite: SqliteDriver,
+    SqlServer2012: SqlServer2012Driver,
+    Oracle12: Oracle12Drivier,
   }
-  const pool = {
-    query,
-    async connect() {
-      return { query, release() {} }
+  const Constructor = drivers[dialect as keyof typeof drivers]
+  const driver = new Constructor({} as never)
+  // Use real native driver/renderers while capturing at the execution boundary.
+  Object.defineProperty(driver, 'transactionManager', {
+    value: {
+      executeReadonly: (fn: () => Promise<unknown>) => fn(),
+      defaultExecutor: {
+        async executeStatement(text: string, args: { value: unknown }[]) {
+          statements.push({
+            text: text.replace(/\s+/g, ' ').trim(),
+            values: args.map((arg) => arg.value),
+          })
+          return rows
+        },
+      },
     },
-    async end() {},
-  }
-  const driver = new PostgresDriver(pool as never)
-  // Namespace template tests use the PG transport only to capture SQL/bindings;
-  // overriding the name does not claim to execute the other database drivers.
-  if (dialect) Object.defineProperty(driver, 'name', { value: dialect })
+  })
   const original = newSqlClient(driver, {
     entityManager: EntityManager.combine(SALES as never, SALES as never),
   })
-  return { original, client: enhanceClient(original), statements }
+  return { original, client: enhanceClient(original, driverFamily(driver.name)), statements }
 }
 
 describe('q.fn native API extensions', () => {
@@ -325,7 +355,7 @@ describe('q.fn native API extensions', () => {
     let expression: NumExpression<number | null> | undefined
     pg.createQuery(SALES, (q, t) => {
       expression = q.fn.postgres.tsRank(t.category, t.category)
-      expect(() => q.fn.mysql.findInSet('a', t.category)).toThrow('DIALECT_MISMATCH')
+      expect('mysql' in q.fn).toBe(false)
       return q.select(t.id)
     })
     expect(() =>
@@ -354,19 +384,22 @@ describe('q.fn native API extensions', () => {
     ['Oracle12', 'json_value'],
   ])('renders %s namespace templates and binds data', async (dialect, expected) => {
     const { client, statements } = capture([], dialect)
+    // This parameterized test selects the active namespace by its runtime name;
+    // static cross-dialect restrictions are covered separately by compile tests.
+    const fn = client.fn as unknown as QueryFunctions & DialectFunctions
     await client
       .createQuery(SALES, (q, t) =>
         q.select({
           value:
             dialect === 'postgres'
-              ? q.fn.postgres.jsonbExtractPathText(t.category, "x'quoted")
+              ? fn.postgres.jsonbExtractPathText(t.category, "x'quoted")
               : dialect === 'mysql'
-                ? q.fn.mysql.timestampDiff('DAY', t.createdAt, new Date('2020-01-01Z'))
+                ? fn.mysql.timestampDiff('DAY', t.createdAt, new Date('2020-01-01Z'))
                 : dialect === 'sqlite'
-                  ? q.fn.sqlite.jsonGroupArray(t.category)
+                  ? fn.sqlite.jsonGroupArray(t.category)
                   : dialect === 'SqlServer2012'
-                    ? q.fn.sqlserver.dateDiff('day', t.createdAt, new Date('2020-01-01Z'))
-                    : q.fn.oracle.jsonValue(t.category, '$."x\'quoted"'),
+                    ? fn.sqlserver.dateDiff('day', t.createdAt, new Date('2020-01-01Z'))
+                    : fn.oracle.jsonValue(t.category, '$."x\'quoted"'),
         }),
       )
       .fetchList()
@@ -528,7 +561,7 @@ describe('q.fn native API extensions', () => {
 
   it('closes query conditions on callback completion and when the callback throws', () => {
     const { client } = capture()
-    let saved: QueryConditions | undefined
+    let saved: QueryConditions<'postgres'> | undefined
     let predicate: ReturnType<NumExpression<number>['gt']> | undefined
     client.createQuery(SALES, (q, t) => {
       predicate = t.id.gt(0)
@@ -720,11 +753,9 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
     try {
       database.exec(`create table FUNCTION_SALE (ID integer primary key, CATEGORY text, LABEL text, AMOUNT integer, TAX integer, CREATED_AT text);
         insert into FUNCTION_SALE values (1, 'A', null, 1, 1, '2020-01-01'), (2, 'a', null, 2, 1, '2020-01-01'), (3, 'B', null, 5, 2, '2020-01-01')`)
-      const client = enhanceClient(
-        newSqlClient(new SqliteDriver(adapter as never), {
-          entityManager: EntityManager.combine(SALES as never, SALES as never),
-        }),
-      )
+      const client = newSqliteClient(new SqliteDriver(adapter as never), {
+        entityManager: EntityManager.combine(SALES as never, SALES as never),
+      })
       const result = await client
         .createQuery(SALES, (q, t) => {
           const category = q.fn.lower(t.category)
@@ -845,6 +876,26 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
         .createQuery(SALES, (q, t) => q.select(scalarSubquery).where(t.id.eq(1)))
         .fetchList()
       expect(subqueryNested).toEqual([6])
+      const manager = new FilterManager()
+      manager.add(SALES, (t) => t.tax.gt(1))
+      const filtered = deriveClient(client, { filterManager: manager, defaultBatchSize: 4 })
+      expect(filtered.dialect).toBe('sqlite')
+      const filteredRows = await filtered
+        .createQuery(SALES, (q, t) =>
+          q
+            .select({
+              tax: t.tax,
+              names: q.fn.sqlite.jsonGroupArray(t.category),
+              total: q.fn.sum(t.amount).coalesce(0),
+            })
+            .where(t.amount.gt(0))
+            .autoGroupBy(),
+        )
+        .fetchList()
+      expect(filteredRows).toEqual([{ tax: 2, names: '["B"]', total: 5 }])
+      expect(
+        await client.createQuery(SALES, (q, t) => q.select(t.id).orderBy(t.id)).fetchList(),
+      ).toEqual([1, 2, 3])
     } finally {
       database.close()
     }

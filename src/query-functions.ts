@@ -17,7 +17,8 @@ import { getFunctionMetadata, isExpression, markFunction } from './function-sema
 import type { FunctionKind } from './function-semantics'
 import { sqlArgument, sqlExpression, callParts } from './sql-function'
 import { createDialectFunctions } from './dialect-functions'
-import type { DialectFunctions } from './dialect-functions'
+import type { DialectFunctionsFor } from './dialect-functions'
+import type { Dialect, DialectProfile } from './dialect-context'
 import { createExpressionEnhancer, originalExpressionMethod } from './expression-chain'
 import type {
   ChainedExpression,
@@ -109,7 +110,7 @@ type MinMax = {
   ): ChainedDateExpression<Date | null>
 } & typeof dsl.min
 
-export type QueryFunctions = DialectFunctions &
+export type QueryFunctions<D extends Dialect = Dialect> = DialectFunctionsFor<D> &
   Omit<
     typeof dsl,
     'count' | 'constant' | 'sum' | 'avg' | 'min' | 'max' | 'native' | 'subQuery' | 'baseQuery'
@@ -155,8 +156,8 @@ export type QueryFunctions = DialectFunctions &
     readonly asNonNull: <E extends ExpressionLike>(
       expression: E,
     ) => ResultOf<E, NonNullable<ValueOf<E>>>
-    readonly subQuery: import('./query-enhancer').EnhancedSubQueryCreator
-    readonly baseQuery: import('./query-enhancer').EnhancedBaseQueryCreator
+    readonly subQuery: import('./query-enhancer').EnhancedSubQueryCreator<D>
+    readonly baseQuery: import('./query-enhancer').EnhancedBaseQueryCreator<D>
     readonly concat: (
       ...values: [
         string | StrExpression<string> | StrExpression<string | null>,
@@ -305,11 +306,12 @@ const EXPRESSION_METHODS = [
 ] as const
 
 /** Reuse the upstream function/AST implementations; add semantics at the boundary. */
-export function createQueryFunctions(
+export function createQueryFunctions<D extends Dialect>(
   subQuery: Callable,
   baseQuery: Callable,
-  dialect: string,
-): QueryFunctions {
+  profile: DialectProfile<D>,
+): QueryFunctions<D> {
+  const dialect = profile.family
   const functions: Record<string, unknown> = {}
   for (const [name, value] of Object.entries(dsl)) {
     if (typeof value === 'function') {
@@ -336,11 +338,11 @@ export function createQueryFunctions(
   const native =
     (name: string, create: Callable) =>
     (...args: unknown[]) =>
-      markFunction(Reflect.apply(create, undefined, args), { name, kind: 'opaque' })
+      markFunction(Reflect.apply(create, undefined, args), { name, kind: 'opaque', dialect })
   const nativeNumber = (...args: unknown[]) => {
     const result = Reflect.apply(dsl.native.num, undefined, args)
     Object.defineProperty(result, 'explicitDataType', { value: spi.ExplicitDataType.FLOAT })
-    return markFunction(result, { name: 'native.num', kind: 'opaque' })
+    return markFunction(result, { name: 'native.num', kind: 'opaque', dialect })
   }
   functions.native = Object.freeze({
     num: Object.assign(nativeNumber, {
@@ -387,7 +389,11 @@ export function createQueryFunctions(
   }
   for (const kind of ['scalar', 'aggregate'] as const satisfies readonly FunctionKind[]) {
     functions[kind] = <T extends ExpressionLike>(expression: T) =>
-      markFunction(expression, { name: 'annotated', kind }, true)
+      markFunction(
+        expression,
+        { ...getFunctionMetadata(expression), name: 'annotated', kind },
+        true,
+      )
   }
   functions.metadata = getFunctionMetadata
   Object.assign(functions, createDialectFunctions(dialect))
@@ -418,5 +424,5 @@ export function createQueryFunctions(
       )
     }
   }
-  return Object.freeze(functions) as unknown as QueryFunctions
+  return Object.freeze(functions) as unknown as QueryFunctions<D>
 }
