@@ -30,6 +30,7 @@ export type {
   ChainedDateExpression,
 } from './expression-chain'
 export type { QueryFunctions } from './query-functions'
+export type { PortableFunctions, NumericArgument } from './portable-functions'
 export { getFunctionMetadata, QuerySemanticError } from './function-semantics'
 export type { FunctionMetadata, FunctionKind } from './function-semantics'
 export type { SqlFunctionDefinition, DialectFunctions } from './dialect-functions'

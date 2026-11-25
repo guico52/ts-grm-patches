@@ -40,6 +40,20 @@ export function checkFunctionTypes(client: EnhancedSqlClient): void {
       .coalesce(0)
     const nullableLength: ChainedNumExpression<number | null> = q.fn.lower(t.label).length()
     const date: ChainedDateExpression<Date> = q.fn.min(t.at).coalesce(new Date()).plus(1, 'DAYS')
+    const math: ChainedNumExpression<number> = q.fn.abs(t.id).sqrt().power(2).round(2).coalesce(0)
+    const size: ChainedNumExpression<number | null> = q.fn.lower(t.label).charLength().abs()
+    const distinct: ChainedNumExpression<number> = q.fn.countDistinct(t.name)
+    q.fn.abs(text)
+    // @ts-expect-error Numeric functions reject string expressions.
+    q.fn.abs(t.name)
+    // @ts-expect-error String lengths reject numeric expressions.
+    q.fn.charLength(t.id)
+    // @ts-expect-error POWER requires a numeric exponent.
+    q.fn.abs(t.id).power('two')
+    // @ts-expect-error Numeric results have no string length operation.
+    q.fn.abs(t.id).charLength()
+    // @ts-expect-error COUNT DISTINCT requires one expression, not a raw literal.
+    q.fn.countDistinct('name')
     // @ts-expect-error String functions require string expressions.
     q.fn.lower(t.id)
     // @ts-expect-error Comparison preserves the expression's value type.
@@ -69,6 +83,9 @@ export function checkFunctionTypes(client: EnhancedSqlClient): void {
         position,
         nullableLength,
         date,
+        math,
+        size,
+        distinct,
       })
       .where(t.id.gt(0))
   })

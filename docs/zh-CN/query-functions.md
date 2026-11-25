@@ -55,7 +55,7 @@ q.fn.upper(t.name).position('X').plus(1)
 
 普通业务参数仍由原生绑定器绑定。字符串、数值、日期结果保留各自的方法和可空性推导，position 的结果可以继续数值运算，concat、coalesce 的结果也可继续字符串变换。coalesce 使用变长参数形式且至少提供一个 fallback。
 
-增强只添加到表达式实例，保留 AST 对象身份、prototype 和 Visitor；不修改全局表达式原型。函数形式与链式形式调用同一份保存的原生方法，避免相互转调造成递归。公开类型包含 ChainedStrExpression、ChainedNumExpression、ChainedDateExpression，并可传回原生表达式 API。
+增强只添加到表达式实例，保留 AST 对象身份、prototype 和 Visitor；不修改全局表达式原型。函数形式与链式形式进入同一函数上下文，再选择方言实现或保存的原生方法，避免相互转调造成递归。公开类型包含 ChainedStrExpression、ChainedNumExpression、ChainedDateExpression，并可传回原生表达式 API。
 
 标量子查询经 distinct 创建的新实例也继续增强，asValue 后可接 coalesce 等 SQL 函数；这不扩大 autoGroupBy 对子查询自动推导的范围。已验证的上游 0.0.13 不生成子查询 LIMIT/OFFSET，增强层会对这两种调用报告 UNSUPPORTED_SUBQUERY_PAGINATION，防止静默丢失分页；根查询的 limit/offset 不受此限制。
 
@@ -71,7 +71,68 @@ q.fn.upper(t.name).position('X').plus(1)
 - `enhanceClient` 使用实际 driver 的名称识别 PostgreSQL、MySQL、SQLite、SQL Server、Oracle 及其上游版本变体。不同 client 不共享可变方言状态。
 - 从原 client 派生出的新 client 应分别调用 `enhanceClient()`；不替换全局 QueryFactory、SQL builder、执行器或事务系统。
 
-上游函数的方言支持和基本语义仍适用。例如 SQLite 原生 driver 不支持 reverse/pad，增加 `q.fn.reverse` 不代表补丁已为其实现等价算法；字符串索引、排序规则、日期运算单位沿用原生规则。
+通用数学函数及部分字符串函数由补丁按绑定方言实现，见下表。其他上游函数仍保留原有支持范围和语义，尤其是日期运算、整数除法和排序规则。
+
+## 通用函数的方言实现
+
+这些函数直接生成原生表达式 parts，继续使用 ts-grm 的 Visitor 和参数绑定器。结果中的字段和聚合依赖均可被 autoGroupBy 识别，不对最终 SQL 做文本改写。
+
+| API                         | PostgreSQL           | MySQL          | SQLite       | SQL Server            | Oracle     |
+| --------------------------- | -------------------- | -------------- | ------------ | --------------------- | ---------- |
+| abs、sign、floor、sqrt、exp | 同名函数             | 同名函数       | 同名函数     | 同名函数              | 同名函数   |
+| ceil                        | ceil                 | ceil           | ceil         | ceiling               | ceil       |
+| ln                          | ln                   | ln             | ln           | log                   | ln         |
+| log10                       | log                  | log10          | log10        | log10                 | log(10, x) |
+| trunc(x)                    | trunc                | truncate(x, 0) | trunc        | round(x, 0, 1)        | trunc      |
+| round(x, digits?)           | 转 numeric 后 round  | round          | round        | round                 | round      |
+| power(x, exponent)          | power                | power          | power        | 底数转 float 后 power | power      |
+| charLength / length         | char_length          | char_length    | length       | 带尾部标记的 LEN      | length     |
+| octetLength                 | octet_length         | octet_length   | octet_length | datalength            | lengthb    |
+| countDistinct(expr)         | COUNT(DISTINCT expr) | 同左           | 同左         | 同左                  | 同左       |
+
+新增数学函数接受数值字面量、NULL 或数值表达式，结果统一按 JavaScript number 读取，类型保守为 number \| null；高精度数值列也会转为 number，不提供精确小数计算保证。countDistinct 只接受单个表达式，返回 number，忽略 NULL，空集返回 0。它标记为 aggregate，可继续 abs/round 等链式调用；同阶段聚合嵌套仍会被拒绝。
+
+```ts
+q.fn.sum(t.amount).abs().round(2).coalesce(0)
+q.fn.power(t.amount, -1).sqrt()
+q.fn.lower(t.name).charLength().abs()
+q.fn.countDistinct(t.category).plus(1)
+```
+
+round 的 digits 仅接受非负安全整数，缺省为 0；trunc 当前只支持向零截断至整数。不同数据库对近似数舍入、溢出、非法数学定义域的处理仍有差异，可能返回 NULL 或报数据库错误。显式传入的 digits、exponent 等数据继续绑定；带绑定参数的分组键仍受后文的参数化分组限制。缺省的 round 精度不增加绑定参数。
+
+字符串适配同时覆盖函数形式和链式形式：
+
+- left 在 PostgreSQL/MySQL/SQL Server 使用 LEFT，在 SQLite/Oracle 使用 SUBSTR(x, 1, length)，修正上游共享模板未截取前缀的问题。
+- right 在 SQLite/Oracle 对长度 0 和 NULL 单独处理，其他三库使用 RIGHT。
+- substring 在 SQL Server 使用 SUBSTRING，并在省略 length 时补齐其必需参数；其他库使用 SUBSTR。
+- position 在 PostgreSQL/MySQL/SQLite/SQL Server/Oracle 分别使用 STRPOS/LOCATE/INSTR/CHARINDEX/INSTR。支持 start；PostgreSQL/SQLite 使用子串查找后修正偏移，未找到返回 0，NULL 输入返回 NULL。
+- trim 在 SQL Server 使用 LTRIM(RTRIM(x))，不依赖 SQL Server 2017 的 TRIM。
+- lpad/rpad 在 PostgreSQL/MySQL/Oracle 使用原生函数；SQLite 使用 zeroblob/hex/replace 生成重复填充串，SQL Server 使用 REPLICATE，按目标字符长度截取。这两个展开实现会在长度不足时截短原串，空 fill 不补齐，NULL 输入返回 NULL；原生函数对空 fill 的处理仍遵循厂商规则。
+- SQLite、Oracle 的 reverse 缺少受支持的原生实现，构造时报告 UNSUPPORTED_FUNCTION；若部署了 UDF，可通过对应方言的 call 声明调用。
+
+start 字面量必须为正安全整数，length 字面量必须为非负安全整数；传入数值表达式时由调用者保证同样的值域。长度以字符计并保留尾部空格，字节长度取决于数据库编码和存储类型。字符计数及查找仍遵循数据库字符集/排序规则；SQLite 的内嵌 NUL、Oracle 的空字符串等厂商行为不做统一转换。SQL Server 旧版本需使用标准的 CONCAT_NULL_YIELDS_NULL ON 设置。补齐、带 start 的查找等展开式可能多次引用输入，应避免依赖易变函数的单次求值语义。
+
+SQLite 能力要求在创建或派生 client 时声明：
+
+```ts
+const db = newSqlClient(
+  driver,
+  { entityManager },
+  {
+    serverVersion: [3, 43],
+    capabilities: { 'sqlite.mathFunctions': true },
+  },
+)
+```
+
+SQLite 的 ceil/floor/trunc/sqrt/exp/ln/log10/power 要求 sqlite.mathFunctions 显式为 true，表示部署环境提供 SQLITE_ENABLE_MATH_FUNCTIONS；abs/sign/round 不依赖该编译选项。octetLength 要求声明 SQLite >= 3.43，或 sqlite.octetLength 为 true；显式 false 优先禁用。未满足要求时构造表达式即报 UNSUPPORTED_FUNCTION。声明不安装扩展，也不触发联网探测。
+
+@see [PostgreSQL 数学函数](https://www.postgresql.org/docs/15/functions-math.html)
+@see [SQLite 数学函数与编译选项](https://www.sqlite.org/lang_mathfunc.html)
+@see [SQLite 核心字符串函数](https://www.sqlite.org/lang_corefunc.html)
+@see [SQL Server SUBSTRING](https://learn.microsoft.com/en-us/sql/t-sql/functions/substring-transact-sql)
+@see [Oracle INSTR](https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/INSTR.html)
 
 ## 语义标记
 

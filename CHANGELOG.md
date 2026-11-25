@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Portable numeric functions specialized for five dialects, chained numeric
+  transforms, character/byte lengths and aggregate-aware COUNT DISTINCT.
+- SQLite optional-math and octet-length capability checks using bound profiles.
+
 - Dialect-bound `newSqlClient` factories at the root and postgres/mysql/sqlite/
   sqlserver/oracle entries, with checked existing-client binding, driver-based type
   inference, and specialization preserved through projections and nested queries.
@@ -31,6 +35,13 @@ All notable changes to this project are documented here. The format follows
   SUM/AVG, and fixes to enhanced AVG decoding, MIN/MAX runtime expression families,
   position, coalesce, and concat.
 - SQL/binding and type checks, plus real SQLite grouping/aggregate execution tests.
+
+### Fixed
+
+- Dialect rendering for string prefix/suffix, substring, start-aware search,
+  padding and trim; SQLite padding now has a native-expression implementation.
+- SQL Server trailing-space character length and integer POWER results,
+  PostgreSQL decimal ROUND signatures, and explicit unsupported REVERSE errors.
 
 ## [0.2.2] - 2026-10-25
 

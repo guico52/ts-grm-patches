@@ -15,6 +15,7 @@ import { enhanceClient, getFunctionMetadata, newSqlClient as deriveClient } from
 import { newSqlClient as newSqliteClient } from '../src/sqlite'
 import type { ChainedNumExpression, ChainedStrExpression, QueryConditions } from '../src/index'
 import type { Dialect, DialectFunctions, EnhancedSqlClient, QueryFunctions } from '../src/index'
+import type { DialectOptions } from '../src/index'
 import { driverFamily } from '../src/dialect-context'
 
 const SALES = model(
@@ -39,8 +40,8 @@ function capture(rows?: unknown[][]): Capture<'postgres'>
 function capture(rows: unknown[][], dialect: 'postgres'): Capture<'postgres'>
 function capture(rows: unknown[][], dialect: 'mysql'): Capture<'mysql'>
 function capture(rows: unknown[][], dialect: 'sqlite'): Capture<'sqlite'>
-function capture(rows: unknown[][], dialect: string): Capture<Dialect>
-function capture(rows: unknown[][] = [], dialect = 'postgres'): unknown {
+function capture(rows: unknown[][], dialect: string, options?: DialectOptions): Capture<Dialect>
+function capture(rows: unknown[][] = [], dialect = 'postgres', options?: DialectOptions): unknown {
   const statements: { text: string; values: unknown[] }[] = []
   const drivers = {
     postgres: PostgresDriver,
@@ -69,8 +70,175 @@ function capture(rows: unknown[][] = [], dialect = 'postgres'): unknown {
   const original = newSqlClient(driver, {
     entityManager: EntityManager.combine(SALES as never, SALES as never),
   })
-  return { original, client: enhanceClient(original, driverFamily(driver.name)), statements }
+  return {
+    original,
+    client: enhanceClient(original, driverFamily(driver.name), options),
+    statements,
+  }
 }
+
+describe('portable functions specialized by the bound dialect', () => {
+  it.each([
+    ['postgres', 'left(', 'right(', 'substr(', 'strpos('],
+    ['mysql', 'left(', 'right(', 'substr(', 'locate('],
+    ['sqlite', 'substr(', 'case when', 'substr(', 'instr('],
+    ['SqlServer2012', 'left(', 'right(', 'substring(', 'charindex('],
+    ['Oracle12', 'substr(', 'case when', 'substr(', 'instr('],
+  ])(
+    'specializes %s string functions and start-aware search',
+    async (dialect, left, right, substring, position) => {
+      const { client, statements } = capture([], dialect!)
+      await client
+        .createQuery(SALES, (q, t) =>
+          q.select({
+            left: q.fn.left(t.category, 2),
+            right: q.fn.right(t.category, 2),
+            substring: q.fn.substring(t.category, 2, 3),
+            tail: q.fn.substring(t.category, 2),
+            find: q.fn.position(t.category, 'x'),
+            findAfter: q.fn.position(t.category, 'x', 2),
+            nested: q.fn.lower(t.category).trim().lpad(4, 'xy').rpad(6).right(3),
+          }),
+        )
+        .fetchList()
+      for (const part of [left, right, substring, position])
+        expect(statements[0]!.text).toContain(part)
+      expect(statements[0]!.values).toContain('xy')
+      if (dialect === 'SqlServer2012') {
+        expect(statements[0]!.text).toContain('ltrim(rtrim(')
+        expect(statements[0]!.text).toContain('replicate(cast(')
+        expect(statements[0]!.text).toContain('as bigint), 2147483647)')
+        expect(statements[0]!.text).not.toContain('substr(')
+      }
+      if (dialect === 'sqlite') expect(statements[0]!.text).toContain('replace(hex(zeroblob(')
+    },
+  )
+
+  it('rejects unsupported reverse and invalid string ranges before rendering', () => {
+    for (const dialect of ['sqlite', 'Oracle12']) {
+      const { client } = capture([], dialect)
+      expect(() => client.createQuery(SALES, (q, t) => q.select(q.fn.reverse(t.category)))).toThrow(
+        'UNSUPPORTED_FUNCTION',
+      )
+    }
+    const { client } = capture()
+    client.createQuery(SALES, (q, t) => {
+      expect(() => q.fn.left(t.category, -1)).toThrow('safe integer')
+      expect(() => q.fn.substring(t.category, 0)).toThrow('safe integer')
+      expect(() => q.fn.position(t.category, 'x', 0)).toThrow('safe integer')
+      expect(() => q.fn.rpad(t.category, 0.5)).toThrow('safe integer')
+      return q.select(t.id)
+    })
+  })
+  it.each([
+    ['postgres', 'ceil(', 'trunc(', 'ln(', 'log(', 'octet_length(', 'char_length('],
+    ['mysql', 'ceil(', 'truncate(', 'ln(', 'log10(', 'octet_length(', 'char_length('],
+    ['sqlite', 'ceil(', 'trunc(', 'ln(', 'log10(', 'octet_length(', 'length('],
+    ['SqlServer2012', 'ceiling(', 'round(', 'log(', 'log10(', 'datalength(', 'len(cast('],
+    ['Oracle12', 'ceil(', 'trunc(', 'ln(', 'log(10, ', 'lengthb(', 'length('],
+  ])(
+    'renders %s with its native SQL and bound data',
+    async (dialect, ceil, trunc, ln, log10, bytes, chars) => {
+      const { client, statements } = capture([], dialect!, {
+        serverVersion: [3, 43],
+        capabilities: { 'sqlite.mathFunctions': true },
+      })
+      await client
+        .createQuery(SALES, (q, t) =>
+          q.select({
+            abs: q.fn.abs(t.amount),
+            sign: q.fn.sign(t.amount),
+            ceil: q.fn.ceil(t.amount),
+            floor: q.fn.floor(t.amount),
+            trunc: q.fn.trunc(t.amount),
+            sqrt: q.fn.sqrt(t.amount),
+            exp: q.fn.exp(t.amount),
+            ln: q.fn.ln(t.amount),
+            log10: q.fn.log10(t.amount),
+            power: q.fn.power(t.amount, -1),
+            round: q.fn.round(t.amount, 2),
+            bytes: q.fn.octetLength(t.category),
+            chars: q.fn.charLength(t.category),
+            length: q.fn.lower(t.category).length(),
+            bound: q.fn.charLength("中'); drop table FUNCTION_SALE; --"),
+          }),
+        )
+        .fetchList()
+      const statement = statements[0]!
+      for (const sql of [ceil, trunc, ln, log10, bytes, chars])
+        expect(statement.text).toContain(sql)
+      expect(statement.values).toContain(-1)
+      expect(statement.values).toContain(2)
+      expect(statement.values).toContain("中'); drop table FUNCTION_SALE; --")
+      expect(statement.text).not.toContain('drop table')
+      if (dialect === 'postgres')
+        expect(statement.text).toContain('round(cast(tb_1_.AMOUNT as numeric), ')
+      if (dialect === 'SqlServer2012') {
+        expect(statement.text).toContain('round(tb_1_.AMOUNT, 0, 1)')
+        expect(statement.text).toContain('power(cast(tb_1_.AMOUNT as float), ')
+        expect(statement.text).toContain("as nvarchar(max)) + N'#') - 1)")
+      }
+    },
+  )
+
+  it('preserves grouping dependencies and aggregate detection through new chains', async () => {
+    const { client, statements } = capture()
+    await client
+      .createQuery(SALES, (q, t) =>
+        q.autoGroupBy().select({
+          key: q.fn.lower(t.category).charLength().abs().round(),
+          count: q.fn.countDistinct(t.label).plus(1),
+          total: q.fn.sum(t.amount).abs().sqrt().round(),
+        }),
+      )
+      .fetchList()
+    expect(statements[0]!.text).toContain('count(distinct tb_1_.LABEL)')
+    expect(statements[0]!.text).toMatch(
+      /group by round\(cast\(abs\(char_length\(lower\(tb_1_\.CATEGORY\)\)\) as numeric\), 0\)$/,
+    )
+    expect(() =>
+      client.createQuery(SALES, (q, t) =>
+        q.autoGroupBy().select(q.fn.countDistinct(q.fn.sum(t.amount)).abs()),
+      ),
+    ).toThrow('NESTED_AGGREGATE')
+    const { client: other } = capture([], 'mysql')
+    expect(() => other.createQuery(SALES, (q) => q.select(client.fn.abs(1)))).toThrow(
+      'DIALECT_MISMATCH',
+    )
+  })
+
+  it('requires explicit SQLite optional capabilities and respects overrides', () => {
+    const { client } = capture([], 'sqlite')
+    expect(() => client.fn.sqrt(4)).toThrow('sqlite.mathFunctions')
+    expect(() => client.fn.constant(4).sqrt()).toThrow('sqlite.mathFunctions')
+    expect(() => client.fn.octetLength('中')).toThrow('UNSUPPORTED_FUNCTION')
+    const old = capture([], 'sqlite', { serverVersion: [3, 42, 9] }).client
+    expect(() => old.fn.octetLength('中')).toThrow('UNSUPPORTED_FUNCTION')
+    const supported = capture([], 'sqlite', { serverVersion: [3, 43] }).client
+    expect(() => supported.fn.octetLength('中')).not.toThrow()
+    const disabled = capture([], 'sqlite', {
+      serverVersion: [3, 50],
+      capabilities: { 'sqlite.octetLength': false },
+    }).client
+    expect(() => disabled.fn.octetLength('中')).toThrow('UNSUPPORTED_FUNCTION')
+    const custom = capture([], 'sqlite', { capabilities: { 'sqlite.octetLength': true } }).client
+    expect(() => custom.fn.octetLength('中')).not.toThrow()
+  })
+
+  it('validates the portable input contract before query execution', () => {
+    const { client } = capture()
+    expect(() => client.fn.abs(NaN)).toThrow('finite number')
+    expect(() => client.fn.power(2, Infinity)).toThrow('finite number')
+    for (const digits of [-1, 0.5, NaN, Infinity])
+      expect(() => client.fn.round(1.25, digits)).toThrow('nonnegative safe integer')
+    expect(() => client.fn.countDistinct(null as never)).toThrow('one expression')
+    client.createQuery(SALES, (q, t) => {
+      expect(() => q.fn.abs(t.category as never)).toThrow('numeric expression')
+      expect(() => q.fn.charLength(t.amount as never)).toThrow('string expression')
+      return q.select(t.id)
+    })
+  })
+})
 
 describe('q.fn native API extensions', () => {
   it('enhances only the selected client and is idempotent', () => {
@@ -756,6 +924,130 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
       const client = newSqliteClient(new SqliteDriver(adapter as never), {
         entityManager: EntityManager.combine(SALES as never, SALES as never),
       })
+      const mathEnabled =
+        database
+          .prepare("select sqlite_compileoption_used('ENABLE_MATH_FUNCTIONS') as enabled")
+          .get()!.enabled === 1
+      const functionsClient = deriveClient(
+        client,
+        {},
+        {
+          serverVersion: [3, 43],
+          capabilities: { 'sqlite.mathFunctions': mathEnabled },
+        },
+      )
+      const values = await functionsClient
+        .createQuery(SALES, (q, t) =>
+          q
+            .select({
+              abs: q.fn.abs(-1.5).round(1),
+              sign: q.fn.sign(-4),
+              round: q.fn.round(1.25, 1),
+              chars: q.fn.charLength('中文  '),
+              bytes: q.fn.octetLength('中文  '),
+              empty: q.fn.charLength(''),
+              null: q.fn.charLength(t.label),
+              nullableMath: q.fn.abs(null).round(),
+            })
+            .where(t.id.eq(1)),
+        )
+        .fetchList()
+      expect(values).toEqual([
+        {
+          abs: 1.5,
+          sign: -1,
+          round: 1.3,
+          chars: 4,
+          bytes: 8,
+          empty: 0,
+          null: null,
+          nullableMath: null,
+        },
+      ])
+      const strings = await client
+        .createQuery(SALES, (q, t) => {
+          const text = q.fn.native.str`'中ab '`
+          const repeated = q.fn.native.str`'abab'`
+          return q
+            .select({
+              left: q.fn.left(text, 2),
+              right: q.fn.right(text, 2),
+              rightZero: q.fn.right(text, 0),
+              part: q.fn.substring(text, 2, 2),
+              tail: q.fn.substring(text, 2),
+              lpad: q.fn.lpad(text, 6, 'xy'),
+              rpad: q.fn.rpad(text, 6, 'xy'),
+              shortened: q.fn.lpad(text, 2, 'xy'),
+              noFill: q.fn.rpad(text, 6, ''),
+              find: q.fn.position(repeated, 'ab', 2),
+              absent: q.fn.position(repeated, 'z', 2),
+              nullPad: q.fn.lpad(t.label, 4),
+              nullRight: q.fn.right(t.label, 0),
+              nullFind: q.fn.position(t.label, 'a', 2),
+            })
+            .where(t.id.eq(1))
+        })
+        .fetchList()
+      expect(strings).toEqual([
+        {
+          left: '中a',
+          right: 'b ',
+          rightZero: '',
+          part: 'ab',
+          tail: 'ab ',
+          lpad: 'xy中ab ',
+          rpad: '中ab xy',
+          shortened: '中a',
+          noFill: '中ab ',
+          find: 3,
+          absent: 0,
+          nullPad: null,
+          nullRight: null,
+          nullFind: null,
+        },
+      ])
+      const distinct = await functionsClient
+        .createQuery(SALES, (q, t) =>
+          q
+            .select({
+              key: q.fn.lower(t.category).charLength().abs().round(),
+              count: q.fn.countDistinct(q.fn.lower(t.category)),
+              nullCount: q.fn.countDistinct(t.label),
+            })
+            .autoGroupBy(),
+        )
+        .fetchList()
+      expect(distinct).toEqual([{ key: 1, count: 2, nullCount: 0 }])
+      if (mathEnabled) {
+        const math = await functionsClient
+          .createQuery(SALES, (q, t) =>
+            q
+              .select({
+                ceil: q.fn.ceil(-1.2),
+                floor: q.fn.floor(-1.2),
+                trunc: q.fn.trunc(-1.8),
+                power: q.fn.power(2, -1),
+                sqrt: q.fn.constant(9).sqrt().round(),
+                ln: q.fn.ln(q.fn.exp(1)).round(),
+                log10: q.fn.log10(100).round(),
+                aggregate: q.fn.sum(t.amount).sqrt().round(2),
+              })
+              .autoGroupBy(),
+          )
+          .fetchList()
+        expect(math).toEqual([
+          {
+            ceil: -1,
+            floor: -2,
+            trunc: -1,
+            power: 0.5,
+            sqrt: 3,
+            ln: 1,
+            log10: 2,
+            aggregate: 2.83,
+          },
+        ])
+      }
       const result = await client
         .createQuery(SALES, (q, t) => {
           const category = q.fn.lower(t.category)

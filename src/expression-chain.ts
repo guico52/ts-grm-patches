@@ -9,6 +9,8 @@ import type {
 } from '@ts-grm/core'
 
 import { isExpression, QuerySemanticError } from './function-semantics'
+import { NUMERIC_FUNCTIONS, STRING_FUNCTIONS } from './portable-functions'
+import type { PortableFunctions } from './portable-functions'
 
 type StringValue = string | null | undefined
 type StringArgument =
@@ -36,6 +38,13 @@ type NumericOperation<T extends NumericValue> = <U extends NumericValue>(
 ) => ChainedNumExpression<__MergeNumType<T, U>>
 
 export type ChainedNumExpression<T extends NumericValue> = {
+  [K in (typeof NUMERIC_FUNCTIONS)[number]]: PortableFunctions[K] extends (
+    value: never,
+    ...args: infer A
+  ) => infer R
+    ? (...args: A) => R
+    : never
+} & {
   plus: NumericOperation<T>
   minus: NumericOperation<T>
   times: NumericOperation<T>
@@ -77,6 +86,8 @@ type StringTransforms<T extends StringValue> = {
 /** Corrected overloads precede the upstream string contract, keeping these values
  * assignable to native StrExpression while fixing its position() return type. */
 export type ChainedStrExpression<T extends StringValue> = StringTransforms<T> & {
+  charLength(): ChainedNumExpression<number | null>
+  octetLength(): ChainedNumExpression<number | null>
   concat(...values: readonly StringArgument[]): ChainedStrExpression<string | null>
   rtrim(): ChainedStrExpression<T>
   position(
@@ -163,6 +174,15 @@ export function createExpressionEnhancer(
       descriptors.concat = {
         value: (...args: unknown[]) => invoke('concat', value, args),
       }
+    }
+    const additional =
+      value instanceof spi.AbstractNumExpr
+        ? NUMERIC_FUNCTIONS
+        : value instanceof spi.AbstractStrExpr
+          ? STRING_FUNCTIONS
+          : []
+    for (const name of additional) {
+      descriptors[name] = { value: (...args: unknown[]) => invoke(name, value, args) }
     }
     Object.defineProperties(value, descriptors)
     originals.set(value, saved)

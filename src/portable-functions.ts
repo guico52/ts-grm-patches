@@ -1,0 +1,185 @@
+import { spi } from '@ts-grm/core'
+import type { ExpressionLike, NumExpression, StrExpression } from '@ts-grm/core'
+import type { DialectProfile } from './dialect-context'
+import type { ChainedNumExpression } from './expression-chain'
+import { isExpression, QuerySemanticError } from './function-semantics'
+import { callParts, sqlArgument, sqlExpression } from './sql-function'
+
+export type NumericArgument =
+  | number
+  | null
+  | NumExpression<number>
+  | NumExpression<number | null>
+  | NumExpression<number | undefined>
+  | NumExpression<number | null | undefined>
+  | NumExpression<string>
+  | NumExpression<string | null>
+  | NumExpression<string | undefined>
+  | NumExpression<string | null | undefined>
+export type StringArgument =
+  | string
+  | null
+  | StrExpression<string>
+  | StrExpression<string | null>
+  | StrExpression<string | undefined>
+  | StrExpression<string | null | undefined>
+type NumericFunction = (value: NumericArgument) => ChainedNumExpression<number | null>
+export interface PortableFunctions {
+  readonly abs: NumericFunction
+  readonly sign: NumericFunction
+  readonly ceil: NumericFunction
+  readonly floor: NumericFunction
+  readonly trunc: NumericFunction
+  readonly sqrt: NumericFunction
+  readonly exp: NumericFunction
+  readonly ln: NumericFunction
+  readonly log10: NumericFunction
+  readonly round: (value: NumericArgument, digits?: number) => ChainedNumExpression<number | null>
+  readonly power: (
+    value: NumericArgument,
+    exponent: NumericArgument,
+  ) => ChainedNumExpression<number | null>
+  readonly charLength: (value: StringArgument) => ChainedNumExpression<number | null>
+  readonly octetLength: (value: StringArgument) => ChainedNumExpression<number | null>
+  readonly countDistinct: (value: ExpressionLike) => ChainedNumExpression<number>
+}
+
+export const NUMERIC_FUNCTIONS = [
+  'abs',
+  'sign',
+  'ceil',
+  'floor',
+  'trunc',
+  'sqrt',
+  'exp',
+  'ln',
+  'log10',
+  'round',
+  'power',
+] as const
+export const STRING_FUNCTIONS = ['charLength', 'octetLength'] as const
+
+/** Lower to native expression parts, so the semantic visitor still sees operands.
+ * @see https://www.postgresql.org/docs/15/functions-math.html
+ * @see https://dev.mysql.com/doc/refman/8.4/en/mathematical-functions.html
+ * @see https://www.sqlite.org/lang_mathfunc.html
+ * @see https://learn.microsoft.com/en-us/sql/t-sql/functions/round-transact-sql
+ * @see https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/Single-Row-Functions.html
+ */
+export function createPortableFunctions(profile: DialectProfile): PortableFunctions {
+  const dialect = profile.family
+  const number = (value: NumericArgument) => {
+    if (
+      typeof value === 'number'
+        ? !Number.isFinite(value)
+        : value !== null && (!isExpression(value) || !(value instanceof spi.AbstractNumExpr))
+    )
+      throw new TypeError('Expected a finite number or numeric expression')
+    return sqlArgument(value)
+  }
+  const string = (value: StringArgument) => {
+    if (
+      typeof value !== 'string' &&
+      value !== null &&
+      (!isExpression(value) || !(value instanceof spi.AbstractStrExpr))
+    )
+      throw new TypeError('Expected a string or string expression')
+    return sqlArgument(value)
+  }
+  const result = (name: string, parts: spi.NativeExprContract['parts']) =>
+    sqlExpression(name, 'number', 'scalar', parts, dialect)
+  const requireMath = (name: string) => {
+    if (dialect === 'sqlite' && profile.capabilities['sqlite.mathFunctions'] !== true)
+      throw new QuerySemanticError(
+        'UNSUPPORTED_FUNCTION',
+        `${name} requires capabilities['sqlite.mathFunctions'] = true (SQLITE_ENABLE_MATH_FUNCTIONS)`,
+      )
+  }
+  const functions: Record<string, unknown> = {}
+  for (const name of NUMERIC_FUNCTIONS) {
+    if (name === 'round' || name === 'power') continue
+    functions[name] = (value: NumericArgument) => {
+      const input = number(value)
+      if (!['abs', 'sign'].includes(name)) requireMath(name)
+      let sql: string = name
+      if (name === 'ceil' && dialect === 'sqlserver') sql = 'ceiling'
+      if (name === 'ln' && dialect === 'sqlserver') sql = 'log'
+      if (name === 'log10' && dialect === 'postgres') sql = 'log'
+      if (name === 'trunc' && dialect === 'mysql') return result(name, ['truncate(', input, ', 0)'])
+      if (name === 'trunc' && dialect === 'sqlserver')
+        return result(name, ['round(', input, ', 0, 1)'])
+      if (name === 'log10' && dialect === 'oracle') return result(name, ['log(10, ', input, ')'])
+      return result(name, callParts(sql, [input]))
+    }
+  }
+  functions.round = (value: NumericArgument, digits?: number) => {
+    // SQLite treats negative scale as zero; reject that nonportable contract.
+    if (digits !== undefined && (!Number.isSafeInteger(digits) || digits < 0))
+      throw new TypeError('round digits must be a nonnegative safe integer')
+    const input = number(value)
+    return result(
+      'round',
+      dialect === 'postgres'
+        ? [
+            'round(cast(',
+            input,
+            ' as numeric), ',
+            digits === undefined ? '0' : sqlArgument(digits),
+            ')',
+          ]
+        : ['round(', input, ', ', digits === undefined ? '0' : sqlArgument(digits), ')'],
+    )
+  }
+  functions.power = (value: NumericArgument, exponent: NumericArgument) => {
+    requireMath('power')
+    const input = number(value)
+    const exp = number(exponent)
+    // SQL Server's POWER(int, negative exponent) otherwise returns an integer.
+    return result(
+      'power',
+      dialect === 'sqlserver'
+        ? ['power(cast(', input, ' as float), ', exp, ')']
+        : callParts('power', [input, exp]),
+    )
+  }
+  // @see https://learn.microsoft.com/en-us/sql/t-sql/functions/len-transact-sql
+  functions.charLength = (value: StringArgument) => {
+    const input = string(value)
+    if (dialect === 'sqlserver')
+      return result('charLength', ['(len(cast(', input, " as nvarchar(max)) + N'#') - 1)"])
+    return result(
+      'charLength',
+      callParts(dialect === 'mysql' || dialect === 'postgres' ? 'char_length' : 'length', [input]),
+    )
+  }
+  // @see https://www.sqlite.org/releaselog/3_43_0.html
+  functions.octetLength = (value: StringArgument) => {
+    if (dialect === 'sqlite') {
+      const capability = profile.capabilities['sqlite.octetLength']
+      const version = profile.serverVersion
+      const supported =
+        version !== undefined && (version[0] > 3 || (version[0] === 3 && (version[1] ?? 0) >= 43))
+      if (capability === false || (capability !== true && !supported))
+        throw new QuerySemanticError(
+          'UNSUPPORTED_FUNCTION',
+          "octetLength requires SQLite >= 3.43 or capabilities['sqlite.octetLength'] = true",
+        )
+    }
+    const sql =
+      dialect === 'sqlserver' ? 'datalength' : dialect === 'oracle' ? 'lengthb' : 'octet_length'
+    return result('octetLength', callParts(sql, [string(value)]))
+  }
+  functions.countDistinct = (value: ExpressionLike) => {
+    if (!isExpression(value)) throw new TypeError('countDistinct requires one expression')
+    const expression = sqlExpression(
+      'countDistinct',
+      'number',
+      'aggregate',
+      ['count(distinct ', value, ')'],
+      dialect,
+    )
+    Object.defineProperty(expression, 'explicitDataType', { value: spi.ExplicitDataType.INTEGER })
+    return expression
+  }
+  return Object.freeze(functions) as unknown as PortableFunctions
+}

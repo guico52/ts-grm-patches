@@ -17,6 +17,9 @@ import { getFunctionMetadata, isExpression, markFunction } from './function-sema
 import type { FunctionKind } from './function-semantics'
 import { sqlArgument, sqlExpression, callParts } from './sql-function'
 import { createDialectFunctions } from './dialect-functions'
+import { createPortableFunctions } from './portable-functions'
+import { createStringFunctions } from './string-functions'
+import type { PortableFunctions } from './portable-functions'
 import type { DialectFunctionsFor } from './dialect-functions'
 import type { Dialect, DialectProfile } from './dialect-context'
 import { createExpressionEnhancer, originalExpressionMethod } from './expression-chain'
@@ -111,6 +114,7 @@ type MinMax = {
 } & typeof dsl.min
 
 export type QueryFunctions<D extends Dialect = Dialect> = DialectFunctionsFor<D> &
+  PortableFunctions &
   Omit<
     typeof dsl,
     'count' | 'constant' | 'sum' | 'avg' | 'min' | 'max' | 'native' | 'subQuery' | 'baseQuery'
@@ -202,17 +206,6 @@ class AggregateEnumSet extends spi.AbstractEsExpr<string> {
   }
   override accept(visitor: spi.Visitor): void {
     visitor.visitAggregateExpr(this.source)
-  }
-}
-class NumericDelegate extends spi.AbstractNumExpr<number> {
-  constructor(
-    readonly source: spi.Node,
-    readonly explicitDataType = spi.ExplicitDataType.INTEGER,
-  ) {
-    super()
-  }
-  override accept(visitor: spi.Visitor): void {
-    this.source.accept(visitor)
   }
 }
 
@@ -360,23 +353,6 @@ export function createQueryFunctions<D extends Dialect>(
   }
   functions.subQuery = subQuery
   functions.baseQuery = baseQuery
-  functions.position = (
-    expression: spi.AbstractStrExpr,
-    substring: string,
-    start?: number | spi.AbstractNumExpr<number>,
-  ) =>
-    markFunction(
-      new NumericDelegate(
-        Reflect.apply(originalExpressionMethod(expression, 'position'), expression, [
-          substring,
-          start,
-        ]) as spi.Node,
-      ),
-      {
-        name: 'position',
-        kind: 'scalar',
-      },
-    )
   functions.concat = (...values: unknown[]) => {
     if (values.length === 0) throw new TypeError('fn.concat requires at least one argument')
     const exprs = values.map((value) => (typeof value === 'string' ? sqlArgument(value) : value))
@@ -396,6 +372,11 @@ export function createQueryFunctions<D extends Dialect>(
       )
   }
   functions.metadata = getFunctionMetadata
+  const portable = createPortableFunctions(profile)
+  Object.assign(functions, portable)
+  Object.assign(functions, createStringFunctions(profile))
+  functions.length = (value: Parameters<typeof portable.charLength>[0]) =>
+    markFunction(portable.charLength(value), { name: 'length', kind: 'scalar', dialect }, true)
   Object.assign(functions, createDialectFunctions(dialect))
   const enhance = createExpressionEnhancer(
     [...EXPRESSION_METHODS, 'position'],

@@ -99,7 +99,7 @@ db.dialectProfile
 
 profile、版本数组和 capability 字典均复制后冻结。serverVersion 接受一至三个非负安全整数；capabilities 的值必须是 boolean，缺少的键表示未声明。
 
-这些是调用者的声明，本轮不联网探测、不根据 driver 变体推测服务端版本，也没有新增逐函数版本/能力门槛；声明不会自动启用 SQLite 编译选项、安装扩展或改变某个函数的原生限制。具体函数的服务端可用性仍由使用方保证。
+这些是调用者的声明，不联网探测、不根据 driver 变体推测服务端版本。通用函数实现会检查已定义的能力门槛：SQLite 可选数学函数要求 sqlite.mathFunctions 为 true；octetLength 要求声明 SQLite >= 3.43 或 sqlite.octetLength 为 true，显式 false 优先禁用。详见[通用函数的方言实现](./query-functions.md#通用函数的方言实现)。声明不会自动启用编译选项或安装扩展，其他专有函数的服务端可用性仍由使用方保证。
 
 派生时自动继承声明；第三参数可为新 client 覆盖版本或按键合并能力，父 profile 不变。已绑定实例不能被原地重新配置声明，更新应通过派生工厂完成。
 
