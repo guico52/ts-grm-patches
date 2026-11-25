@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `enhanceClient(client)`: native-client query extensions with `client.fn`, `q.fn`,
+  semantic function metadata, and opt-in `q.autoGroupBy()`.
+- Functional entry points for the installed upstream DSL and expression methods,
+  enhanced base/subquery callbacks, and an initial five-dialect function catalog.
+- Conditions after `select` / `selectDistinct`, with grouping and HAVING finalized
+  when the owning query callback completes. Result inference is preserved for
+  scalar, tuple and map projections.
+- Recursive function-result chains for common, dialect and native expressions;
+  shared native-method dispatch, variadic chained COALESCE, string CONCAT and
+  numeric POSITION results, preserving aggregate dependencies.
+- Explicit errors for subquery pagination that upstream 0.0.13 would silently omit.
+- Explicit scalar/aggregate annotation for native SQL, numeric return modes for
+  SUM/AVG, and fixes to enhanced AVG decoding, MIN/MAX runtime expression families,
+  position, coalesce, and concat.
+- SQL/binding and type checks, plus real SQLite grouping/aggregate execution tests.
+
 ## [0.2.2] - 2026-10-25
 
 ### Added

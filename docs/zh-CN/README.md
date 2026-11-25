@@ -20,15 +20,40 @@ ts-grm 的列元数据（`ColumnDef`，见 `packages/sql/src/impl/schema_def.ts`
 
 ## 能力范围
 
-本包只负责**为 ts-grm 添加能力**：声明入口 + 元数据。
+本包**为 ts-grm 添加能力**：列元数据、全局过滤器、查询函数与可选的自动分组。
 
-**不负责 SQL 生成** —— 把 `autoIncrement` / `default` 翻译成 `serial` / `identity(1,1)` /
+列元数据补丁**不负责 DDL 生成** —— 把 `autoIncrement` / `default` 翻译成 `serial` / `identity(1,1)` /
 `auto_increment` / `default <...>` 子句，是消费方（例如 ts-grm-migrate）的职责。
 
 ## 依赖要求
 
 `@ts-grm/core` 与 `@ts-grm/sql` 是本包的 **peerDependencies**（`>=0.0.13 <0.0.14`），
 由宿主项目提供，本包不打包上游实现。
+
+## 查询函数与自动分组
+
+`enhanceClient(client)` 给指定的原生 client 添加 `q.fn` 与 `q.autoGroupBy()`，继续使用原生查询生成、绑定、执行和事务：
+
+```ts
+import { enhanceClient } from 'ts-grm-patches'
+
+const db = enhanceClient(client)
+await db
+  .createQuery(ORDER, (q, t) =>
+    q
+      .select({
+        category: q.fn.lower(t.category),
+        total: q.fn.sum(t.amount).coalesce(0),
+      })
+      .where(t.amount.gt(0))
+      .autoGroupBy(),
+  )
+  .fetchList()
+```
+
+支持已安装版本的全部 DSL 入口与表达式方法的函数形式，以及五库专有函数命名空间。聚合自带语义标记，自动分组保留完整标量表达式，不收集聚合输入列。完整说明见[查询函数与自动分组](./query-functions.md)，包括参数化键分层、数值读取、方言函数及当前限制。
+
+select 后可以继续链式调用 where 等条件方法，在回调结束时统一定稿；q.fn 的返回值也会逐步增强，支持 SQL 函数嵌套并保留类型和聚合依赖。
 
 ## 上游 issue
 

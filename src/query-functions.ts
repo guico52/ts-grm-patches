@@ -1,0 +1,422 @@
+import { dsl, spi } from '@ts-grm/core'
+import type {
+  CmpExpression,
+  DateExpression,
+  EnumSetExpression,
+  Expression,
+  ExpressionLike,
+  NumExpression,
+  StrExpression,
+  TimeUnit,
+  __MergeNumType,
+  __ExpressionItf,
+  __CmpExpressionItf,
+} from '@ts-grm/core'
+
+import { getFunctionMetadata, isExpression, markFunction } from './function-semantics'
+import type { FunctionKind } from './function-semantics'
+import { sqlArgument, sqlExpression, callParts } from './sql-function'
+import { createDialectFunctions } from './dialect-functions'
+import type { DialectFunctions } from './dialect-functions'
+import { createExpressionEnhancer, originalExpressionMethod } from './expression-chain'
+import type {
+  ChainedExpression,
+  ChainedStrExpression,
+  ChainedNumExpression,
+  ChainedDateExpression,
+} from './expression-chain'
+
+type Callable = (...args: never[]) => unknown
+type SpecialMethod =
+  | '__type'
+  | 'position'
+  | 'length'
+  | 'plus'
+  | 'minus'
+  | 'times'
+  | 'div'
+  | 'rem'
+  | 'coalesce'
+  | 'asNonNull'
+type Lift<T> = {
+  [K in keyof T as K extends SpecialMethod ? never : T[K] extends Callable ? K : never]: <
+    E extends T,
+  >(
+    expression: E,
+    ...args: Parameters<Extract<E[K], Callable>>
+  ) => ChainedExpression<ReturnType<Extract<E[K], Callable>>>
+}
+type Numeric =
+  | NumExpression<number>
+  | NumExpression<number | null>
+  | NumExpression<string>
+  | NumExpression<string | null>
+type ValueOf<E extends ExpressionLike> =
+  ReturnType<E['__type']> extends { readonly __t?: infer T } ? T : never
+type ResultOf<E extends ExpressionLike, V> =
+  ReturnType<E['__type']> extends { numExpression: true }
+    ? ChainedNumExpression<Extract<V, number | string | null | undefined>>
+    : ReturnType<E['__type']> extends { strExpression: true }
+      ? ChainedStrExpression<Extract<V, string | null | undefined>>
+      : ReturnType<E['__type']> extends { dateExpression: true }
+        ? ChainedDateExpression<Extract<V, Date | null | undefined>>
+        : ReturnType<E['__type']> extends { enumSetExpression: true }
+          ? EnumSetExpression<Extract<V, string | null | undefined>>
+          : ReturnType<E['__type']> extends { cmpExpression: true }
+            ? CmpExpression<V>
+            : Expression<V>
+type FallbackValue<E extends ExpressionLike, A extends readonly unknown[]> = A extends readonly [
+  ...unknown[],
+  infer Last,
+]
+  ? Last extends ExpressionLike
+    ? NonNullable<ValueOf<E>> | Extract<ValueOf<Last>, null | undefined>
+    : NonNullable<ValueOf<E>>
+  : ValueOf<E>
+type FallbackExpression<E extends ExpressionLike> =
+  | Expression<NonNullable<ValueOf<E>>>
+  | Expression<ValueOf<E> | null>
+  | Expression<ValueOf<E> | undefined>
+  | Expression<ValueOf<E> | null | undefined>
+interface Arithmetic {
+  <T extends number | string | null | undefined, U extends number | string | null | undefined>(
+    expression: NumExpression<T>,
+    value: NonNullable<U> | NumExpression<U>,
+  ): ChainedNumExpression<__MergeNumType<T, U>>
+}
+type DateArithmetic = <T extends Date | null | undefined>(
+  expression: DateExpression<T>,
+  value: number,
+  unit: TimeUnit,
+) => ChainedDateExpression<T>
+
+interface NumericAggregate {
+  <E extends Numeric>(
+    expression: E,
+  ): ChainedNumExpression<Extract<ValueOf<E>, number | string> | null>
+  (expression: Numeric, options: { as: 'number' }): ChainedNumExpression<number | null>
+  (expression: Numeric, options: { as: 'string' }): ChainedNumExpression<string | null>
+}
+type MinMax = {
+  <T extends string | null | undefined>(
+    expression: StrExpression<T>,
+  ): ChainedStrExpression<string | null>
+  <E extends Numeric>(
+    expression: E,
+  ): ChainedNumExpression<Extract<ValueOf<E>, number | string> | null>
+  <T extends Date | null | undefined>(
+    expression: DateExpression<T>,
+  ): ChainedDateExpression<Date | null>
+} & typeof dsl.min
+
+export type QueryFunctions = DialectFunctions &
+  Omit<
+    typeof dsl,
+    'count' | 'constant' | 'sum' | 'avg' | 'min' | 'max' | 'native' | 'subQuery' | 'baseQuery'
+  > &
+  Lift<__ExpressionItf<unknown>> &
+  Lift<__CmpExpressionItf<unknown>> &
+  Lift<StrExpression<string>> &
+  Lift<StrExpression<string | null>> &
+  Lift<NumExpression<number>> &
+  Lift<NumExpression<number | null>> &
+  Lift<NumExpression<string>> &
+  Lift<NumExpression<string | null>> &
+  Lift<DateExpression<Date>> &
+  Lift<DateExpression<Date | null>> &
+  Lift<EnumSetExpression<string>> &
+  Lift<EnumSetExpression<string | null>> & {
+    readonly sum: NumericAggregate
+    readonly avg: NumericAggregate
+    readonly min: MinMax
+    readonly max: MinMax
+    readonly count: (expression?: ExpressionLike) => ChainedNumExpression<number>
+    readonly constant: (value: number) => ChainedNumExpression<number>
+    readonly native: {
+      str(...args: Parameters<typeof dsl.native.str>): ChainedStrExpression<string>
+      date(...args: Parameters<typeof dsl.native.date>): ChainedDateExpression<Date>
+      num: {
+        (...args: Parameters<typeof dsl.native.num>): ChainedNumExpression<number>
+        asString(...args: Parameters<typeof dsl.native.num.asString>): ChainedNumExpression<string>
+      }
+    }
+    readonly plus: Arithmetic & DateArithmetic
+    readonly minus: Arithmetic & DateArithmetic
+    readonly times: Arithmetic
+    readonly div: Arithmetic
+    readonly rem: Arithmetic
+    readonly coalesce: <
+      E extends ExpressionLike,
+      const A extends readonly (NonNullable<ValueOf<E>> | FallbackExpression<E>)[],
+    >(
+      expression: E,
+      ...values: A
+    ) => ResultOf<E, FallbackValue<E, A>>
+    readonly asNonNull: <E extends ExpressionLike>(
+      expression: E,
+    ) => ResultOf<E, NonNullable<ValueOf<E>>>
+    readonly subQuery: import('./query-enhancer').EnhancedSubQueryCreator
+    readonly baseQuery: import('./query-enhancer').EnhancedBaseQueryCreator
+    readonly concat: (
+      ...values: [
+        string | StrExpression<string> | StrExpression<string | null>,
+        ...(string | StrExpression<string> | StrExpression<string | null>)[],
+      ]
+    ) => ChainedStrExpression<string | null>
+    readonly rtrim: <T extends string | null>(
+      expression: StrExpression<T>,
+    ) => ChainedStrExpression<T>
+    readonly length: <T extends string | null | undefined>(
+      expression: StrExpression<T>,
+    ) => ChainedNumExpression<T extends string ? number : number | null>
+    readonly position: <T extends string | null>(
+      expression: StrExpression<T>,
+      substring: string,
+      start?: number | NumExpression<number>,
+    ) => ChainedNumExpression<number | null>
+    readonly scalar: <T extends ExpressionLike>(expression: T) => ChainedExpression<T>
+    readonly aggregate: <T extends ExpressionLike>(expression: T) => ChainedExpression<T>
+    readonly metadata: typeof getFunctionMetadata
+  }
+
+class AggregateString extends spi.AbstractStrExpr {
+  constructor(readonly source: spi.AggregateExpr<string | number>) {
+    super()
+  }
+  override accept(visitor: spi.Visitor): void {
+    visitor.visitAggregateExpr(this.source)
+  }
+}
+class AggregateDate extends spi.AbstractDtExpr {
+  constructor(readonly source: spi.AggregateExpr<string | number>) {
+    super()
+  }
+  override accept(visitor: spi.Visitor): void {
+    visitor.visitAggregateExpr(this.source)
+  }
+}
+class AggregateEnumSet extends spi.AbstractEsExpr<string> {
+  constructor(readonly source: spi.AggregateExpr<string | number>) {
+    super()
+  }
+  override accept(visitor: spi.Visitor): void {
+    visitor.visitAggregateExpr(this.source)
+  }
+}
+class NumericDelegate extends spi.AbstractNumExpr<number> {
+  constructor(
+    readonly source: spi.Node,
+    readonly explicitDataType = spi.ExplicitDataType.INTEGER,
+  ) {
+    super()
+  }
+  override accept(visitor: spi.Visitor): void {
+    this.source.accept(visitor)
+  }
+}
+
+/** Own the aggregate node so metadata/decoding never modify a caller's expression. */
+function aggregate(
+  op: 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX',
+  input?: unknown,
+  options?: { as: 'number' | 'string' },
+): unknown {
+  if (options !== undefined && options.as !== 'number' && options.as !== 'string')
+    throw new TypeError('Expected numeric return mode number or string')
+  const expr = input as spi.AbstractExpr<string | number> | undefined
+  const source = new spi.AggregateExpr(op, expr)
+  let result: unknown = source
+  if (op === 'MIN' || op === 'MAX') {
+    if (expr instanceof spi.AbstractStrExpr) result = new AggregateString(source)
+    else if (expr instanceof spi.AbstractDtExpr) result = new AggregateDate(source)
+    else if (expr instanceof spi.AbstractEsExpr) result = new AggregateEnumSet(source)
+  }
+  const explicitDataType =
+    options?.as === 'string'
+      ? spi.ExplicitDataType.STRING
+      : options?.as === 'number' ||
+          (op === 'AVG' && expr?.explicitDataType !== spi.ExplicitDataType.STRING)
+        ? spi.ExplicitDataType.FLOAT
+        : source.explicitDataType
+  Object.defineProperty(result, 'explicitDataType', { value: explicitDataType })
+  markFunction(source, { name: op.toLowerCase(), kind: 'aggregate' })
+  return markFunction(result, { name: op.toLowerCase(), kind: 'aggregate' })
+}
+
+const EXPRESSION_METHODS = [
+  'asc',
+  'desc',
+  'eq',
+  'ne',
+  'in',
+  'notIn',
+  'inSubQuery',
+  'notInSubQuery',
+  'eqIf',
+  'neIf',
+  'inIf',
+  'notInIf',
+  'lt',
+  'lte',
+  'gt',
+  'gte',
+  'between',
+  'ltIf',
+  'lteIf',
+  'gtIf',
+  'gteIf',
+  'betweenIf',
+  'isNull',
+  'isNotNull',
+  'like',
+  'ilike',
+  'likeIf',
+  'ilikeIf',
+  'notLike',
+  'notIlike',
+  'notLikeIf',
+  'notIlikeIf',
+  'lower',
+  'upper',
+  'trim',
+  'ltrim',
+  'rtrim',
+  'length',
+  'reverse',
+  'replace',
+  'lpad',
+  'rpad',
+  'left',
+  'right',
+  'substring',
+  'coalesce',
+  'unaryMinus',
+  'plus',
+  'minus',
+  'times',
+  'div',
+  'rem',
+  'diff',
+  'asNonNull',
+  'containsAny',
+  'notContainsAny',
+  'containsAll',
+  'notContainsAll',
+] as const
+
+/** Reuse the upstream function/AST implementations; add semantics at the boundary. */
+export function createQueryFunctions(
+  subQuery: Callable,
+  baseQuery: Callable,
+  dialect: string,
+): QueryFunctions {
+  const functions: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(dsl)) {
+    if (typeof value === 'function') {
+      functions[name] = (...args: unknown[]) =>
+        markFunction(Reflect.apply(value, undefined, args), { name, kind: 'scalar' })
+    }
+  }
+  for (const name of EXPRESSION_METHODS) {
+    functions[name] = (expression: object, ...args: unknown[]) => {
+      const method = originalExpressionMethod(expression, name)
+      if (name === 'coalesce' && args.length === 0)
+        throw new TypeError('coalesce requires at least one fallback')
+      return markFunction(Reflect.apply(method, expression, name === 'coalesce' ? [args] : args), {
+        name,
+        kind: 'scalar',
+      })
+    }
+  }
+  for (const op of ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'] as const) {
+    functions[op.toLowerCase()] = (input?: unknown, options?: { as: 'number' | 'string' }) =>
+      aggregate(op, input, options)
+  }
+  // Keep arbitrary native templates opaque; their SQL text is never parsed for SUM/OVER.
+  const native =
+    (name: string, create: Callable) =>
+    (...args: unknown[]) =>
+      markFunction(Reflect.apply(create, undefined, args), { name, kind: 'opaque' })
+  const nativeNumber = (...args: unknown[]) => {
+    const result = Reflect.apply(dsl.native.num, undefined, args)
+    Object.defineProperty(result, 'explicitDataType', { value: spi.ExplicitDataType.FLOAT })
+    return markFunction(result, { name: 'native.num', kind: 'opaque' })
+  }
+  functions.native = Object.freeze({
+    num: Object.assign(nativeNumber, {
+      asString: native('native.num.asString', dsl.native.num.asString),
+    }),
+    str: native('native.str', dsl.native.str),
+    date: native('native.date', dsl.native.date),
+  })
+  functions.constant = (value: number) => {
+    if (!Number.isFinite(value)) throw new TypeError('fn.constant requires a finite number')
+    const result = dsl.constant(value)
+    if (!Number.isInteger(value))
+      Object.defineProperty(result, 'explicitDataType', { value: spi.ExplicitDataType.FLOAT })
+    return markFunction(result, { name: 'constant', kind: 'scalar' })
+  }
+  functions.subQuery = subQuery
+  functions.baseQuery = baseQuery
+  functions.position = (
+    expression: spi.AbstractStrExpr,
+    substring: string,
+    start?: number | spi.AbstractNumExpr<number>,
+  ) =>
+    markFunction(
+      new NumericDelegate(
+        Reflect.apply(originalExpressionMethod(expression, 'position'), expression, [
+          substring,
+          start,
+        ]) as spi.Node,
+      ),
+      {
+        name: 'position',
+        kind: 'scalar',
+      },
+    )
+  functions.concat = (...values: unknown[]) => {
+    if (values.length === 0) throw new TypeError('fn.concat requires at least one argument')
+    const exprs = values.map((value) => (typeof value === 'string' ? sqlArgument(value) : value))
+    if (!exprs.every(isExpression)) throw new TypeError('fn.concat requires strings or expressions')
+    const parts =
+      dialect === 'mysql' || dialect === 'sqlserver'
+        ? callParts('concat', exprs)
+        : ['(', ...exprs.flatMap((expr, index) => (index === 0 ? [expr] : [' || ', expr])), ')']
+    return sqlExpression('concat', 'string', 'scalar', parts, dialect)
+  }
+  for (const kind of ['scalar', 'aggregate'] as const satisfies readonly FunctionKind[]) {
+    functions[kind] = <T extends ExpressionLike>(expression: T) =>
+      markFunction(expression, { name: 'annotated', kind }, true)
+  }
+  functions.metadata = getFunctionMetadata
+  Object.assign(functions, createDialectFunctions(dialect))
+  const enhance = createExpressionEnhancer(
+    [...EXPRESSION_METHODS, 'position'],
+    (name, expression, args) =>
+      Reflect.apply(functions[name] as Callable, undefined, [expression, ...args]),
+  )
+  const wrap = (fn: Callable): Callable => {
+    const wrapped = (...args: unknown[]) => enhance(Reflect.apply(fn, undefined, args))
+    for (const [name, method] of Object.entries(fn)) {
+      if (typeof method === 'function')
+        Object.defineProperty(wrapped, name, { value: wrap(method as Callable), enumerable: true })
+    }
+    return wrapped
+  }
+  // Include namespace and native-template results, not only the common functions.
+  for (const [name, value] of Object.entries(functions)) {
+    if (typeof value === 'function') functions[name] = wrap(value as Callable)
+    else if (typeof value === 'object' && value !== null) {
+      functions[name] = Object.freeze(
+        Object.fromEntries(
+          Object.entries(value).map(([key, method]) => [
+            key,
+            typeof method === 'function' ? wrap(method as Callable) : method,
+          ]),
+        ),
+      )
+    }
+  }
+  return Object.freeze(functions) as unknown as QueryFunctions
+}

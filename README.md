@@ -24,10 +24,10 @@ This package is the **extension patch** that fills the gap.
 
 ## Scope
 
-It only **adds capability to ts-grm**: the declaration entry points and the
-metadata.
+It **adds capability to ts-grm**: column metadata, global filters, query functions,
+and opt-in automatic grouping.
 
-It does **not generate SQL**. Translating `autoIncrement` / `default` into
+The column patches do **not generate DDL**. Translating `autoIncrement` / `default` into
 `serial` / `identity(1,1)` / `auto_increment` / `default <...>` clauses is the
 consumer's responsibility (for example `ts-grm-migrate`).
 
@@ -36,6 +36,39 @@ consumer's responsibility (for example `ts-grm-migrate`).
 `@ts-grm/core` and `@ts-grm/sql` are **peerDependencies**
 (`>=0.0.13 <0.0.14`), supplied by the host project. Upstream implementations are
 never bundled.
+
+## Query functions and automatic grouping
+
+`enhanceClient(client)` extends the selected native client with `q.fn` and
+`q.autoGroupBy()`. It preserves the upstream query builder and executor:
+
+```ts
+import { enhanceClient } from 'ts-grm-patches'
+
+const db = enhanceClient(client)
+await db
+  .createQuery(ORDER, (q, t) =>
+    q
+      .select({
+        category: q.fn.lower(t.category),
+        total: q.fn.sum(t.amount).coalesce(0),
+      })
+      .where(t.amount.gt(0))
+      .autoGroupBy(),
+  )
+  .fetchList()
+```
+
+The function context exposes every installed upstream DSL entry and expression
+method in function form, plus five dialect namespaces. Aggregates carry semantic
+metadata; grouping follows full scalar expressions and excludes aggregate inputs.
+`client.fn` also supports building enhanced base queries outside root callbacks.
+Selections support chained conditions inside the query callback, and function results
+support recursive SQL-function chains while preserving aggregate dependencies.
+
+See [query functions, dialect catalog, and inference limits](docs/zh-CN/query-functions.md).
+This feature does not repair upstream aggregate counting or promise full cross-database
+function equivalence.
 
 ## Upstream issues
 
