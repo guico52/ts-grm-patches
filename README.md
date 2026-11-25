@@ -368,9 +368,12 @@ pnpm lint           # ESLint
 pnpm format         # Prettier
 pnpm test           # vitest run (includes end-to-end: real model → createSchema() → column metadata)
 pnpm test:exports   # build and verify all ESM/CJS dialect entry points together
+pnpm bench:query    # isolated-process query construction/rendering comparison
 pnpm coverage       # test coverage
 pnpm build          # build to dist/ (ESM + CJS + d.ts)
 ```
+
+Measured scope and results: [query performance review](./docs/zh-CN/query-performance.md).
 
 The package is published in two formats: ESM (`dist/index.js`) and CJS
 (`dist/index.cjs`), with type declarations exposed through `exports` as

@@ -108,6 +108,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:exports": "tsup && node test/package-exports.mjs",
+    "bench:query": "tsup && node bench/query-performance.mjs",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
     "lint": "eslint .",

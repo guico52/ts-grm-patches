@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Reproducible isolated-process query benchmarks (`pnpm bench:query`) and a
+  performance review separating metadata patches, query/function enhancement and
+  automatic grouping from database execution.
 - Portable numeric functions specialized for five dialects, chained numeric
   transforms, character/byte lengths and aggregate-aware COUNT DISTINCT.
 - SQLite optional-math and octet-length capability checks using bound profiles.
