@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1]
+
 ### Added
 
 - Reproducible isolated-process query benchmarks (`pnpm bench:query`) and a
@@ -63,7 +65,7 @@ All notable changes to this project are documented here. The format follows
 
 - Reframe the English/Chinese READMEs and package description around an optional
   ts-grm enhancement layer, with capability navigation, activation boundaries,
-  current peer/runtime requirements and Unreleased API status.
+  current peer/runtime requirements and release status.
 - Add an adoption guide and a documentation-site integration proposal covering
   an ecosystem section, versioned examples and browser-sandbox verification.
 
@@ -130,7 +132,8 @@ All notable changes to this project are documented here. The format follows
 - Forward-compatible support for upstream `IDENTITY` ID generation (not present in
   `@ts-grm/core` 0.0.13).
 
-[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/eb7c62c...HEAD
+[0.3.1]: https://github.com/guico52/ts-grm-patches/compare/v0.2.2...eb7c62c
 [0.2.2]: https://github.com/guico52/ts-grm-patches/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/guico52/ts-grm-patches/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/guico52/ts-grm-patches/compare/v0.1.0...v0.2.0

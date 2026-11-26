@@ -33,10 +33,12 @@ ts-grm-migrate, which remain responsible for generating the corresponding DDL.
 - Node.js **>=20**.
 - Host-provided `@ts-grm/core` and `@ts-grm/sql`: **`>=0.0.13 <0.0.14`**.
   Upstream implementations are never bundled.
-- The enhancements described here are currently under [Unreleased](CHANGELOG.md#unreleased).
-  The repository version is still `0.2.2`; use a build/release containing these APIs.
-  Their presence on the development branch does not mean a previously published
-  `0.2.2` package contains them.
+- The enhancements described here are available in **0.3.1**; see the
+  [release notes](CHANGELOG.md#031).
+
+```bash
+pnpm add ts-grm-patches@0.3.1 @ts-grm/core@0.0.13 @ts-grm/sql@0.0.13
+```
 
 For query enhancements, create or enhance a client. `applyPatches()` is the separate
 installer for column modifiers and BOOL/TEXT fixes, and must precede model definitions.

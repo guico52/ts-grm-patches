@@ -8,9 +8,13 @@ ts-grm 提供模型、AST、参数绑定、SQL 渲染、执行器、连接池与
 
 当前支持 Node.js >=20，以及 @ts-grm/core、@ts-grm/sql 的 >=0.0.13 <0.0.14 范围。
 
-新增查询增强功能记录在 [CHANGELOG 的 Unreleased](../../CHANGELOG.md#unreleased)，仓库 package.json 仍为 0.2.2。这是开发分支文档；使用发布包时，应确认所选版本的 changelog 包含这些 API，不应只根据仓库 README 推断旧发布包已包含新功能。
+本指南介绍的查询增强功能已随 **0.3.1** 发布，详见 [CHANGELOG](../../CHANGELOG.md#031)。在应用中安装发布包及匹配的原生依赖：
 
-在正式发布前，可以构建本地仓库进行接入验证：
+```bash
+pnpm add ts-grm-patches@0.3.1 @ts-grm/core@0.0.13 @ts-grm/sql@0.0.13
+```
+
+需要从源码开发或调试时，也可以构建本地仓库：
 
 ```bash
 # 在 ts-grm-patches 仓库中执行
