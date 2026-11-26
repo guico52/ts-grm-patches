@@ -27,3 +27,6 @@ pnpm-debug.log*
 # agent / tooling state
 .codewhale/
 
+# local next-major research and handoff notes
+/notes/next-major/
+
