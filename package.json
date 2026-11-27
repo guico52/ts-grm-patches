@@ -1,6 +1,6 @@
 {
   "name": "ts-grm-patches",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Optional enhancements for ts-grm: dialect-bound clients, fluent query functions, automatic grouping, filters and schema metadata",
   "keywords": [
     "ts-grm",

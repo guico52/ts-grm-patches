@@ -17,10 +17,9 @@ or the metadata installer.
 | Capability                                                                                       | Entry point                                         | Guide                                                                                                           |
 | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Database binding at client creation; typed dialect namespace and derived clients                 | `newSqlClient`, five dialect subpaths               | [Dialect-bound clients](docs/zh-CN/dialect-clients.md)                                                          |
-| Conditions after selection, including `select(...).where(...)`                                   | Enhanced query callbacks                            | [Fluent queries](docs/zh-CN/query-functions.md#select-后继续添加条件)                                           |
-| Function form of upstream DSL/methods; recursive SQL-function chains                             | `client.fn`, `q.fn`                                 | [Query functions](docs/zh-CN/query-functions.md)                                                                |
+| In-place fluent expressions + function form of upstream DSL/methods                              | Native expressions, `client.fn`, `q.fn`             | [Query functions](docs/zh-CN/query-functions.md)                                                                |
 | Five-dialect numeric/string implementations, `countDistinct`, vendor functions and UDF contracts | Common functions and the matching dialect namespace | [Function support](docs/zh-CN/query-functions.md#通用函数的方言实现)                                            |
-| Aggregate-aware grouping from full scalar expressions                                            | Opt-in `autoGroupBy()`                              | [Grouping and limits](docs/zh-CN/query-functions.md)                                                            |
+| Aggregate-aware grouping from full scalar expressions                                            | Opt-in `q.autoGroupBy()`                            | [Grouping and limits](docs/zh-CN/query-functions.md)                                                            |
 | Cross-model filters with column-based registration                                               | `createGlobalFilterManager`                         | [Global filters](#global-filters)                                                                               |
 | Column auto-increment/default metadata and BOOL/TEXT query fixes                                 | `applyPatches`, `bool`, `nullableBool`              | [Column metadata](#column-metadata-and-migration-integration), [query fixes](#bool-and-text-columns-in-queries) |
 
@@ -44,20 +43,21 @@ prototypes. These installations also affect native clients using the same module
 copy; callback/query extensions remain attached to the selected client.
 Existing string operations retain their native AST; Driver renderers supply missing
 dialect behavior. New portable function nodes resolve the dialect at rendering.
-`select().where()` remains enabled on enhanced clients, which also satisfy native
-`SqlClient` contracts. See the [guide and limitations](docs/zh-CN/query-functions.md).
+Enhanced clients preserve native `select`/`selectDistinct` projections and `SqlClient`
+contracts. See the [guide and limitations](docs/zh-CN/query-functions.md).
 
 ## Requirements and release status
 
 - Node.js **>=20**.
 - Host-provided `@ts-grm/core` and `@ts-grm/sql`: **`>=0.0.13 <0.0.15`** (verified against
   both `0.0.13` and `0.0.14`). Upstream implementations are never bundled.
-- Current release: **`0.4.0`** (see [release notes](CHANGELOG.md#040---2026-11-27)).
-  **Note**: `0.3.1` was unpublished due to poor native API alignment and high
-  per-instance wrapping overhead; install **`0.4.0`** directly.
+- Current release: **`0.4.1`** (see [release notes](CHANGELOG.md#041---2026-11-27);
+  includes a breaking change removing `select().where()` in favor of native
+  `q.where(...).autoGroupBy().select(...)`). `0.3.1` was unpublished due to poor native API
+  alignment and high per-instance wrapping overhead.
 
 ```bash
-pnpm add ts-grm-patches@0.4.0 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
+pnpm add ts-grm-patches@0.4.1 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
 ```
 
 For query enhancements, create or enhance a client. `applyPatches()` is the separate
@@ -78,23 +78,22 @@ const db = newSqlClient(new PostgresDriver(pool), { entityManager })
 const rows = await db
   .createQuery(ORDER, (q, t) =>
     q
-      .select({
-        category: q.fn.lower(t.category).trim(),
-        total: q.fn.sum(t.amount).abs().round(2).coalesce(0),
-        count: q.fn.count(),
-      })
       .where(t.amount.gt(0))
-      .autoGroupBy(),
+      .autoGroupBy()
+      .select({
+        category: t.category.lower().trim(),
+        total: t.amount.sum().abs().round(2).coalesce(0),
+        count: q.fn.count(),
+      }),
   )
   .fetchList()
 
 // db.dialect is 'postgres'; db.fn.postgres is the available vendor namespace.
 ```
 
-`select`/`selectDistinct` retain result inference and allow chained conditions
-within the owning callback. `autoGroupBy()` groups by the full scalar category
-expression and excludes aggregate inputs. Each value transform continues the
-SQL-function chain. `client.fn` also builds enhanced base queries and subqueries.
+`q.autoGroupBy()` acts as a drop-in replacement for native `q.groupBy(...)`, grouping by
+the full scalar category expression and excluding aggregate inputs. Each value transform
+continues the SQL-function chain. `client.fn` also builds enhanced base queries and subqueries.
 
 For an existing PostgreSQL client, `enhanceClient` from `ts-grm-patches/postgres`
 checks the driver and enhances that instance. The root factory can infer a database
@@ -360,8 +359,8 @@ queries, the patch steps aside — it never overwrites.
   check the requested database family and preserve its namespace type.
 - `client.fn` / `q.fn` — `QueryFunctions` with common functions, semantic metadata,
   enhanced sub/base queries and the matching vendor namespace.
-- Enhanced `select`/`selectDistinct` projections support `where`, `having`,
-  `orderBy`, `groupBy` and `autoGroupBy` until the owning callback completes.
+- `q.autoGroupBy()` — opt-in replacement for `q.groupBy(...)` that infers grouping keys from
+  the returned projection when the query callback completes.
 - `getFunctionMetadata(expression)` / `QuerySemanticError` — metadata inspection
   and explicit construction-time semantic errors.
 - `EnhancedSqlClient`, `DialectProfile`, `DialectOptions` —

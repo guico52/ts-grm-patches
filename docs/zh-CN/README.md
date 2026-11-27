@@ -11,10 +11,9 @@
 | 能力                                                     | 入口                                   | 详细文档                                                           |
 | -------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------ |
 | 创建时绑定数据库、匹配的方言函数命名空间、派生时保留类型 | `newSqlClient` 与五个方言子路径        | [方言绑定 client](./dialect-clients.md)                            |
-| select 后添加条件，保留投影结果推导                      | `select(...).where(...)`               | [链式条件](./query-functions.md#select-后继续添加条件)             |
-| 上游 DSL/表达式方法的函数形式，继续嵌套 SQL 函数         | `client.fn`、`q.fn`                    | [查询函数](./query-functions.md)                                   |
+| 原位表达式链式扩展 + 上游 DSL/表达式方法的函数形式       | 原生表达式、`client.fn`、`q.fn`        | [查询函数](./query-functions.md)                                   |
 | 五库数学/字符串函数适配、去重计数、专有函数和 UDF 声明   | 通用函数和匹配的方言命名空间           | [函数支持](./query-functions.md#通用函数的方言实现)                |
-| 识别聚合依赖，以完整标量表达式推导分组键                 | 显式 `autoGroupBy()`                   | [自动分组与限制](./query-functions.md)                             |
+| 识别聚合依赖，以完整标量表达式推导分组键                 | 显式 `q.autoGroupBy()`                 | [自动分组与限制](./query-functions.md)                             |
 | 按模型集合或匹配列注册过滤器                             | `createGlobalFilterManager`            | [全局过滤器](#全局过滤器)                                          |
 | 自增/默认值元数据及 BOOL/TEXT 查询修复                   | `applyPatches`、`bool`、`nullableBool` | [列元数据](#列元数据与迁移集成)、[查询修复](#布尔与文本列参与查询) |
 
@@ -24,10 +23,10 @@
 
 - Node.js **>=20**。
 - 宿主项目提供 `@ts-grm/core` 和 `@ts-grm/sql`，支持范围为 **`>=0.0.13 <0.0.15`**（已实测验证 `0.0.13` 与 `0.0.14`）；本包不打包上游实现。
-- 当前发布版本为 **`0.4.0`**，详见[版本记录](../../CHANGELOG.md#040---2026-11-27)。`0.3.1` 因逐实例包装与原生 API 割裂严重且性能损耗大，已被作者判定为失败设计并从 npm 撤回，请直接使用 **`0.4.0`**。
+- 当前发布版本为 **`0.4.1`**，详见[版本记录](../../CHANGELOG.md#041---2026-11-27)（包含破坏性变更：移除 `select().where()`，统一回原生 `q.where(...).autoGroupBy().select(...)` 语法）。`0.3.1` 因逐实例包装与原生 API 割裂严重且性能损耗大，已被作者从 npm 撤回。
 
 ```bash
-pnpm add ts-grm-patches@0.4.0 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
+pnpm add ts-grm-patches@0.4.1 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
 ```
 
 查询增强通过创建或增强 client 启用。列修饰符和 BOOL/TEXT 修复由 `applyPatches()` 单独安装，并须早于模型定义。仅导入包不会自动安装这些运行时补丁。全局过滤器也可以独立交给原生 client 使用。
@@ -45,20 +44,20 @@ const db = newSqlClient(new PostgresDriver(pool), { entityManager })
 const rows = await db
   .createQuery(ORDER, (q, t) =>
     q
-      .select({
-        category: q.fn.lower(t.category).trim(),
-        total: q.fn.sum(t.amount).abs().round(2).coalesce(0),
-        count: q.fn.count(),
-      })
       .where(t.amount.gt(0))
-      .autoGroupBy(),
+      .autoGroupBy()
+      .select({
+        category: t.category.lower().trim(),
+        total: t.amount.sum().abs().round(2).coalesce(0),
+        count: q.fn.count(),
+      }),
   )
   .fetchList()
 
 // db.dialect 的类型是 'postgres'；专有函数入口是 db.fn.postgres。
 ```
 
-select/selectDistinct 支持在所属回调中链式追加条件并保留结果类型。autoGroupBy 对完整的 category 标量表达式分组，不把聚合输入列加入分组键。函数结果继续链式嵌套，client.fn 也支持在根查询外构建增强的 BaseQuery 和子查询。
+`q.autoGroupBy()` 作为原生 `q.groupBy(...)` 的同位替代，对完整的 category 标量表达式分组，不把聚合输入列加入分组键。函数结果继续链式嵌套，client.fn 也支持在根查询外构建增强的 BaseQuery 和子查询。
 
 已有 PostgreSQL client 可使用 ts-grm-patches/postgres 的 enhanceClient 做运行时检查和实例增强。根入口 newSqlClient 可以从具体 driver 推导数据库类别；绑定贯穿派生、投影与嵌套查询，只暴露匹配的方言命名空间。
 
@@ -278,14 +277,14 @@ dsl.sum(t.amount).abs().round(2)
 t.name.min().trim()
 ```
 
-applyPatches 或创建/增强 client 会安装共享方法；原生字符串 AST 保留，方言补齐在 NodeRender 执行。新增中立函数节点在渲染时确定方言。增强 client 继续支持默认 select().where()，同时兼容原生 SqlClient。限制与迁移见[查询函数](./query-functions.md)。
+applyPatches 或创建/增强 client 会安装共享方法；原生字符串 AST 保留，方言补齐在 NodeRender 执行。新增中立函数节点在渲染时确定方言。增强 client 保留原生 `select`/`selectDistinct` 投影契约与原生 `SqlClient` 兼容性。限制与迁移见[查询函数](./query-functions.md)。
 
 ## API
 
 - `newSqlClient(source, options?, dialectOptions?)` —— 创建增强的原生 client，或从已绑定 client 派生；也提供 `/postgres`、`/mysql`、`/sqlite`、`/sqlserver`、`/oracle` 子路径。
 - `enhanceClient(client)` —— 增强已有实例；方言子路径同时检查数据库类别，并保留相应命名空间类型。
 - `client.fn` / `q.fn` —— `QueryFunctions`，提供通用函数、语义标记、增强子查询/BaseQuery 与匹配的专有命名空间。
-- 增强的 select/selectDistinct 投影支持 where、having、orderBy、groupBy、autoGroupBy，使用范围截止于所属查询回调结束。
+- `q.autoGroupBy()` —— 原生 `q.groupBy(...)` 的显式同位替代，在查询回调结束时依据最终投影推导分组键。
 - `getFunctionMetadata(expression)` / `QuerySemanticError` —— 函数元数据读取与显式构建期语义错误。
 - `EnhancedSqlClient`、`DialectProfile`、`DialectOptions` —— client、表达式与能力声明的公开类型。
 - `applyPatches(): void` —— 安装补丁。幂等；必须在任何 `model(...)` 定义之前调用。

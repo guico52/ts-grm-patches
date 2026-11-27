@@ -1,6 +1,6 @@
 # 查询函数与自动分组
 
-> 自 `0.4.0` 起全面采用原位链式增强；旧版 `0.3.1` 因 API 割裂与性能问题已从 npm 撤回，请直接使用 `0.4.0`。
+> 自 `0.4.1` 起移除 `select().where()` 等投影后链式条件（破坏性变更），查询回调全面回归原生 `q.where(...).autoGroupBy().having(...).orderBy(...).select(...)` 顺序；旧版 `0.3.1` 已从 npm 撤回。
 
 `enhanceClient(client)` 为指定的原生 ts-grm client 添加函数上下文，并在其查询回调中添加 `q.fn` 和 `q.autoGroupBy()`。返回值仍然是同一个 client；请使用返回值获得增强后的 TypeScript 类型。
 
@@ -13,31 +13,19 @@ const db = enhanceClient(client)
 
 const rows = await db
   .createQuery(ORDER, (q, t) => {
-    const category = q.fn.lower(t.category)
+    const category = t.category.lower()
     return q
-      .select({ category, total: q.fn.sum(t.amount), average: q.fn.avg(t.amount).coalesce(0) })
       .where(t.amount.gt(0))
       .autoGroupBy()
       .orderBy(category)
+      .select({ category, total: t.amount.sum(), average: t.amount.avg().coalesce(0) })
   })
   .fetchList()
 ```
 
 SQL 对完整的 `lower(category)` 分组，而不是原始 category 列。SUM/AVG 的输入列不会进入分组键。`sum(amount).plus(tax)` 只对聚合之外的 tax 推导分组键。
 
-## select 后继续添加条件
-
-select/selectDistinct 返回原生投影，并为投影添加绑定到当前查询的 where、having、orderBy、groupBy、autoGroupBy 和 fn。单值、数组、对象投影均保留原来的结果类型推导；BaseQuery 和子查询的 select 后也可以链式添加条件。
-
-```ts
-db.createQuery(ORDER, (q, t) =>
-  q.select({ id: t.id, amount: t.amount }).where(t.amount.gt(0)).where(t.status.eq('active')),
-)
-```
-
-重复调用 where 会按原生规则通过 AND 合并。条件既可以写在 select 前，也可以写在后面；聚合分析、分组推导和 HAVING 校验统一在同步查询回调结束时进行，之后交给原生引擎。WHERE 始终是聚合前的行过滤，不因写在 select 后就变为 HAVING。
-
-回调可以构造多个投影，最终返回的原生投影决定结果。回调结束后，投影附加的链式条件入口关闭；原生查询方法保留原契约。启用 autoGroupBy 时须在同步回调中完成条件构建。根查询的 fetchList、limit、offset 等原生操作继续按原方式使用。
+`q.autoGroupBy()` 是原生 `q.groupBy(...)` 的同位替代，须与 `where`/`having`/`orderBy` 一样在 `select(...)` 之前调用（`having` 须在 `autoGroupBy()` 或 `groupBy()` 之后调用，与原生契约一致）。`select`/`selectDistinct` 直接返回原生投影对象。
 
 ## 链式嵌套 SQL 函数
 

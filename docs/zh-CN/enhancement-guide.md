@@ -1,6 +1,6 @@
 # 增强包接入指南
 
-ts-grm-patches 是 ts-grm 的可选增强层。它起步于自增和默认值元数据补丁，现在也提供查询函数、链式条件、方言绑定、自动分组、全局过滤器和针对上游问题的修复。
+ts-grm-patches 是 ts-grm 的可选增强层。它起步于自增和默认值元数据补丁，现在也提供原位表达式链式扩展、查询函数、方言绑定、自动分组、全局过滤器和针对上游问题的修复。
 
 ts-grm 提供模型、AST、参数绑定、SQL 渲染、执行器、连接池与事务；本包沿这些原生入口增强使用体验和函数支持范围。
 
@@ -8,10 +8,10 @@ ts-grm 提供模型、AST、参数绑定、SQL 渲染、执行器、连接池与
 
 当前支持 Node.js >=20，以及 @ts-grm/core、@ts-grm/sql 的 >=0.0.13 <0.0.15 范围（已实测验证 0.0.13 与 0.0.14）。
 
-当前发布版本为 **`0.4.0`**，详见 [CHANGELOG](../../CHANGELOG.md#040---2026-11-27)。旧版 `0.3.1` 因逐实例包装与原生 API 割裂严重且性能损耗大，已被作者从 npm 撤回，请直接安装 **`0.4.0`** 及匹配的原生依赖：
+当前发布版本为 **`0.4.1`**，详见 [CHANGELOG](../../CHANGELOG.md#041---2026-11-27)（包含破坏性变更：移除 `select().where()`，统一回原生 `q.where(...).autoGroupBy().select(...)` 语法）。旧版 `0.3.1` 已被作者从 npm 撤回，请直接安装 **`0.4.1`** 及匹配的原生依赖：
 
 ```bash
-pnpm add ts-grm-patches@0.4.0 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
+pnpm add ts-grm-patches@0.4.1 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
 ```
 
 需要从源码开发或调试时，也可以构建本地仓库：
@@ -71,30 +71,30 @@ const child = newSqlClient(db, { defaultBatchSize: 64 })
 
 这会创建新的原生 client，继承原生工厂应保留的 driver/options 和方言声明。详见[client 绑定、派生与 capability](./dialect-clients.md)。
 
-## 查询函数与链式条件
+## 查询函数与自动分组
 
 以下使用项目已有的 ORDER 模型，其 category 是字符串列、amount 是数值列：
 
 ```ts
 const rows = await db
   .createQuery(ORDER, (q, t) => {
-    const category = q.fn.lower(t.category).trim()
+    const category = t.category.lower().trim()
     return q
-      .select({
-        category,
-        total: q.fn.sum(t.amount).abs().round(2).coalesce(0),
-        distinctAmounts: q.fn.countDistinct(t.amount),
-      })
       .where(t.amount.gt(0))
       .autoGroupBy()
       .orderBy(category)
+      .select({
+        category,
+        total: t.amount.sum().abs().round(2).coalesce(0),
+        distinctAmounts: t.amount.countDistinct(),
+      })
   })
   .fetchList()
 ```
 
 SQL 先按 where 过滤行，对完整的 trim(lower(category)) 表达式分组，聚合输入 amount 不会成为分组键。SQL 函数可继续嵌套；sum 的外层 abs/round/coalesce 不会丢失内部聚合依赖。
 
-select/selectDistinct 后的条件链只在所属同步回调中使用。回调可构造多个投影并返回最终选用的原生投影；回调结束后附加链式入口关闭，fetchList 等原生根查询操作继续由 ts-grm 负责。
+查询保持原生 `q.where(...).autoGroupBy().having(...).orderBy(...).select(...)` 顺序，`select`/`selectDistinct` 直接返回原生投影对象，fetchList 等原生根查询操作继续由 ts-grm 负责。
 
 ## 函数范围与自动分组边界
 

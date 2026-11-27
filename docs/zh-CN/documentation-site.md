@@ -8,31 +8,30 @@
 
 截至 2026-11-26，网站目录已有“查询 API”“SQL 后端”“API 参考”等分组，并提供每页 Markdown 与 llms 索引。可以新增一个 ecosystem 分组，沿用 /docs/<group>/<page> 的路由形状：
 
-| 拟议页面         | 拟议路由                              | 主要内容                               | 仓库内容来源                    |
-| ---------------- | ------------------------------------- | -------------------------------------- | ------------------------------- |
-| 增强包概览与接入 | /docs/ecosystem/patches-overview      | 定位、版本、安装和显式启用             | enhancement-guide.md            |
-| 方言绑定 client  | /docs/ecosystem/patches-clients       | 五库工厂、驱动变体、派生与 capability  | dialect-clients.md              |
-| 函数与链式查询   | /docs/ecosystem/patches-functions     | select 后追加条件、通用/方言函数与嵌套 | query-functions.md              |
-| 自动分组         | /docs/ecosystem/patches-grouping      | 标量键、聚合传播、语义错误与分层       | query-functions.md              |
-| 过滤器与元数据   | /docs/ecosystem/patches-model-support | 全局过滤器、默认值、自增及 BOOL/TEXT   | README.md                       |
-| 兼容性与性能     | /docs/ecosystem/patches-limits        | 支持版本、验证范围、性能和已知限制     | query-performance.md 与功能文档 |
+| 拟议页面         | 拟议路由                              | 主要内容                              | 仓库内容来源                    |
+| ---------------- | ------------------------------------- | ------------------------------------- | ------------------------------- |
+| 增强包概览与接入 | /docs/ecosystem/patches-overview      | 定位、版本、安装和显式启用            | enhancement-guide.md            |
+| 方言绑定 client  | /docs/ecosystem/patches-clients       | 五库工厂、驱动变体、派生与 capability | dialect-clients.md              |
+| 函数与链式表达式 | /docs/ecosystem/patches-functions     | 原位链式表达式、通用/方言函数与嵌套   | query-functions.md              |
+| 自动分组         | /docs/ecosystem/patches-grouping      | 标量键、聚合传播、语义错误与分层      | query-functions.md              |
+| 过滤器与元数据   | /docs/ecosystem/patches-model-support | 全局过滤器、默认值、自增及 BOOL/TEXT  | README.md                       |
+| 兼容性与性能     | /docs/ecosystem/patches-limits        | 支持版本、验证范围、性能和已知限制    | query-performance.md 与功能文档 |
 
 每个增强页的开头标注包名、所需增强包版本、匹配的 ts-grm 版本和启用入口。原生与增强代码的 import 来源应完整展示，不让读者把 q.fn、autoGroupBy 或增强工厂当成原生 API。
 
 从现有页面增加相关链接即可，不需要改写它们的基础用法：
 
-| 网站现有页面                    | 增强栏目的链接主题                 |
-| ------------------------------- | ---------------------------------- |
-| 查询 API → 聚合与分组           | q.fn、聚合语义、autoGroupBy 与边界 |
-| 查询 API → 根查询与取形         | select 后追加条件                  |
-| SQL 后端 → 驱动接入与 SqlClient | 创建时绑定方言、派生保留类型       |
-| SQL 后端 → 方言差异             | 通用函数适配与专有命名空间         |
-| SQL 后端 → SQL 拦截器           | 跨模型与按列注册过滤器             |
-| SQL 后端 → 模式创建             | 自增/默认值元数据与 DDL 消费边界   |
+| 网站现有页面                    | 增强栏目的链接主题                       |
+| ------------------------------- | ---------------------------------------- |
+| 查询 API → 聚合与分组           | 原位表达式链式、q.fn、autoGroupBy 与边界 |
+| SQL 后端 → 驱动接入与 SqlClient | 创建时绑定方言、派生保留类型             |
+| SQL 后端 → 方言差异             | 通用函数适配与专有命名空间               |
+| SQL 后端 → SQL 拦截器           | 跨模型与按列注册过滤器                   |
+| SQL 后端 → 模式创建             | 自增/默认值元数据与 DDL 消费边界         |
 
 ## 发布版本与文档来源
 
-增强能力已随 **0.4.0** 发布（旧版 `0.3.1` 已从 npm 撤回）。站点教程可以锁定 ts-grm-patches@0.4.0 及匹配的 ts-grm 依赖，再完成沙盒验证后标为正式可运行示例。
+增强能力已随 **0.4.1** 发布（旧版 `0.3.1` 已从 npm 撤回；`0.4.1` 移除了 `select().where()` 以完全对齐原生查询语法）。站点教程可以锁定 ts-grm-patches@0.4.1 及匹配的 ts-grm 依赖，再完成沙盒验证后标为正式可运行示例。
 
 本包要求 Node >=20、ts-grm >=0.0.13 <0.0.15；网站当前安装页写的是原生 ts-grm 的 Node >=18。增强页应单独列明要求，不能直接沿用原生要求。原生版本未来升级时，应先验证 peerDependencies 与行为，再扩展支持声明。
 
@@ -53,7 +52,7 @@
 
 ## 建议的上线顺序
 
-0.4.0 已发布，可先上线概览页；随后接入 PostgreSQL 沙盒中的链式查询、函数与自动分组；再补齐 client 派生、过滤器、元数据与其他数据库的差异表。
+0.4.1 已发布，可先上线概览页；随后接入 PostgreSQL 沙盒中的原位表达式链式、函数与自动分组；再补齐 client 派生、过滤器、元数据与其他数据库的差异表。
 
 这样既能让现有 ts-grm 用户发现增强包，也能保持原生教程独立可用。是否引入增强依赖由读者显式决定。
 

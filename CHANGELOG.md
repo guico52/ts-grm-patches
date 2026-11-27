@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-27
+
+> **BREAKING CHANGE**: Removed post-selection condition chaining (`select(...).where(...)` /
+> `select(...).autoGroupBy(...)` / `select(...).orderBy(...)`) and the `SelectedQuery` /
+> `QueryConditions` types to stay aligned with native `ts-grm` query syntax. Place `where`,
+> `autoGroupBy`, `having`, and `orderBy` on `q` before `select(...)`, matching native
+> `q.where(...).groupBy(...).having(...).orderBy(...).select(...)`.
+
+### Removed
+
+- Post-selection condition chaining on `select` / `selectDistinct` projections, along with
+  the `SelectedQuery` and `QueryConditions` type exports.
+
+### Changed
+
+- Streamlined `enhanceQuery()` so `select` / `selectDistinct` / `where` / `orderBy` remain
+  untouched native methods; `autoGroupBy()` now acts as a drop-in replacement for native
+  `groupBy(...)` (reading native `wherePred` and `orders` directly) and requires `having(...)`
+  to be called after `autoGroupBy()` or `groupBy(...)`, matching native `ts-grm`.
+- Consolidated dialect/capability validation into callback finalization instead of
+  re-traversing predicates on every `where` / `orderBy` call.
+
 ## [0.4.0] - 2026-11-27
 
 ### Changed
@@ -184,7 +206,8 @@ All notable changes to this project are documented here. The format follows
 - Forward-compatible support for upstream `IDENTITY` ID generation (not present in
   `@ts-grm/core` 0.0.13).
 
-[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/guico52/ts-grm-patches/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/guico52/ts-grm-patches/compare/eb7c62c...v0.4.0
 [0.3.1]: https://github.com/guico52/ts-grm-patches/compare/v0.2.2...eb7c62c
 [0.2.2]: https://github.com/guico52/ts-grm-patches/compare/v0.2.1...v0.2.2
