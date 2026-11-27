@@ -1,5 +1,7 @@
 import { __ScalarProp, spi } from '@ts-grm/core'
 
+import { installExpressionExtensions } from './expression-extensions'
+
 import { installQueryProps } from './query-props'
 
 import type { ColumnDefaultValue, ColumnPatchData } from './types'
@@ -97,4 +99,5 @@ export function applyPatches(): void {
   installScalarModifiers()
   installMetadataReaders()
   installQueryProps()
+  installExpressionExtensions()
 }

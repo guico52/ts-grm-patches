@@ -1,3 +1,5 @@
+// Retain native interface merging in bundled declarations without runtime installation.
+export type {} from './expression-extensions'
 import { createDialectClientFactory, createDialectEnhancer } from './client-factory'
 export const newSqlClient = createDialectClientFactory('sqlite')
 export const enhanceClient = createDialectEnhancer('sqlite')

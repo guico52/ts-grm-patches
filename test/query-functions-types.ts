@@ -1,11 +1,6 @@
 import { model, prop } from '@ts-grm/core'
 import type { DateExpression, NumExpression, StrExpression } from '@ts-grm/core'
 import type { EnhancedSqlClient } from '../src/index'
-import type {
-  ChainedDateExpression,
-  ChainedNumExpression,
-  ChainedStrExpression,
-} from '../src/index'
 
 const FUNCTION_TYPE_MODEL = model(
   'FunctionTypeModel',
@@ -21,28 +16,31 @@ const FUNCTION_TYPE_MODEL = model(
 /** Compile-only API checks; never executed by Vitest. */
 export function checkFunctionTypes(client: EnhancedSqlClient): void {
   client.createQuery(FUNCTION_TYPE_MODEL, (q, t) => {
+    const unchanged: StrExpression<string> = t.name.concat()
+    // @ts-expect-error concat accepts strings/string expressions, not null literals.
+    t.name.concat(null)
+    // @ts-expect-error Both concat entry points reject numeric expressions.
+    q.fn.concat(t.name, t.id)
+    void unchanged
+
     const name: StrExpression<string> = q.fn.lower(t.name)
     const fallback: StrExpression<string> = q.fn.coalesce(t.label, 'fallback')
     const at: DateExpression<Date> = q.fn.asNonNull(t.at)
     const sum: NumExpression<number | null> = q.fn.sum(t.id)
     const text: NumExpression<string | null> = q.fn.sum(t.id, { as: 'string' })
     const times: NumExpression<number> = q.fn.times(t.id, 2)
-    const nested: ChainedNumExpression<number> = q.fn.avg(t.id).coalesce(0).plus(1).coalesce(2)
-    const nestedString: ChainedStrExpression<string> = q.fn
+    const nested: NumExpression<number> = q.fn.avg(t.id).coalesce(0).plus(1).coalesce(2)
+    const nestedString: StrExpression<string> = q.fn
       .lower(t.name)
       .trim()
       .concat('!')
       .coalesce('none')
-    const position: ChainedNumExpression<number> = q.fn
-      .upper(t.name)
-      .position('X')
-      .plus(1)
-      .coalesce(0)
-    const nullableLength: ChainedNumExpression<number | null> = q.fn.lower(t.label).length()
-    const date: ChainedDateExpression<Date> = q.fn.min(t.at).coalesce(new Date()).plus(1, 'DAYS')
-    const math: ChainedNumExpression<number> = q.fn.abs(t.id).sqrt().power(2).round(2).coalesce(0)
-    const size: ChainedNumExpression<number | null> = q.fn.lower(t.label).charLength().abs()
-    const distinct: ChainedNumExpression<number> = q.fn.countDistinct(t.name)
+    const position: NumExpression<number> = q.fn.upper(t.name).position('X').plus(1).coalesce(0)
+    const nullableLength: NumExpression<number | null> = q.fn.lower(t.label).length()
+    const date: DateExpression<Date> = q.fn.min(t.at).coalesce(new Date()).plus(1, 'DAYS')
+    const math: NumExpression<number> = q.fn.abs(t.id).sqrt().power(2).round(2).coalesce(0)
+    const size: NumExpression<number | null> = q.fn.lower(t.label).charLength().abs()
+    const distinct: NumExpression<number> = q.fn.countDistinct(t.name)
     q.fn.abs(text)
     // @ts-expect-error Numeric functions reject string expressions.
     q.fn.abs(t.name)
@@ -108,7 +106,7 @@ export function checkFunctionTypes(client: EnhancedSqlClient): void {
     q.select(t.id, t.name).where(t.id.gt(0)),
   )
   const tuples: Promise<readonly (readonly [number, string])[]> = tuple.fetchList()
-  const subquery: ChainedNumExpression<number> = client.fn
+  const subquery: NumExpression<number> = client.fn
     .subQuery(FUNCTION_TYPE_MODEL, (q, t) => q.select(t.id).where(t.id.gt(0)))
     .distinct()
     .asValue()

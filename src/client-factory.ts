@@ -24,20 +24,22 @@ export interface DialectDriverMap {
 export type SupportedDriver = DialectDriverMap[Dialect]
 export type NativeClientOptions = Parameters<typeof nativeNewSqlClient>[1]
 type BoundSource = BoundClientSource
-type Source = SupportedDriver | BoundSource
+type Source = SupportedDriver | SqlClient
 export type SourceDialect<T> = T extends BoundSource
   ? T['dialect']
-  : T extends PostgresDriver
-    ? 'postgres'
-    : T extends MySqlDriver
-      ? 'mysql'
-      : T extends SqliteDriver
-        ? 'sqlite'
-        : T extends SqlServerDriver
-          ? 'sqlserver'
-          : T extends OracleDriver
-            ? 'oracle'
-            : never
+  : T extends SqlClient
+    ? Dialect
+    : T extends PostgresDriver
+      ? 'postgres'
+      : T extends MySqlDriver
+        ? 'mysql'
+        : T extends SqliteDriver
+          ? 'sqlite'
+          : T extends SqlServerDriver
+            ? 'sqlserver'
+            : T extends OracleDriver
+              ? 'oracle'
+              : never
 
 /** Delegate creation and option inheritance to the native factory; bind once.
  * @see https://github.com/babyfish-ct/ts-grm/blob/8c89604b65922b4626df4e3b8a74d509338ea5b7/packages/sql/src/sql_client.ts
@@ -60,12 +62,9 @@ function createClient(
 ) {
   const isClient = typeof Reflect.get(source, 'createQuery') === 'function'
   const binding = isClient ? getClientBinding(source) : undefined
-  if (isClient && !binding)
-    throw new QuerySemanticError(
-      'UNBOUND_CLIENT',
-      'Bind an existing client with a dialect entry point before deriving it',
-    )
-  const driver = binding?.driver ?? (source as SupportedDriver)
+  const driver =
+    binding?.driver ??
+    (isClient ? (Reflect.get(source, 'driver') as SupportedDriver) : (source as SupportedDriver))
   const family = resolveDriverFamily(driver)
   if (expected !== undefined && family !== expected)
     throw new QuerySemanticError(
@@ -73,10 +72,7 @@ function createClient(
       `${expected} entry cannot create a ${family} client`,
     )
   const profile = createDialectProfile(family, driver.name, dialectOptions, binding?.profile)
-  const client = nativeNewSqlClient(
-    source as unknown as Parameters<typeof nativeNewSqlClient>[0],
-    options,
-  )
+  const client = nativeNewSqlClient(source, options)
   return enhanceClient(client, family, {
     serverVersion: profile.serverVersion,
     // Public lookup types include absent keys; every own value was validated.
@@ -85,8 +81,8 @@ function createClient(
 }
 
 export interface DialectClientFactory<D extends Dialect> {
-  (
-    source: DialectDriverMap[D] | EnhancedSqlClient<D>,
+  <const T extends DialectDriverMap[D] | SqlClient>(
+    source: T & (T extends BoundSource ? (D extends T['dialect'] ? unknown : never) : unknown),
     options?: NativeClientOptions,
     dialectOptions?: DialectOptions,
   ): EnhancedSqlClient<D>

@@ -13,26 +13,21 @@ import type {
   __CmpExpressionItf,
 } from '@ts-grm/core'
 
-import { getFunctionMetadata, isExpression, markFunction } from './function-semantics'
+import { getFunctionMetadata, markFunction } from './function-semantics'
 import type { FunctionKind } from './function-semantics'
-import { sqlArgument, sqlExpression, callParts } from './sql-function'
 import { createDialectFunctions } from './dialect-functions'
-import { createPortableFunctions } from './portable-functions'
-import { createStringFunctions } from './string-functions'
-import type { PortableFunctions } from './portable-functions'
+import { createPortableFacade, deferredConcat } from './portable-expression'
+import type { PortableFunctions, StringArgument } from './portable-functions'
 import type { DialectFunctionsFor } from './dialect-functions'
 import type { Dialect, DialectProfile } from './dialect-context'
-import { createExpressionEnhancer, originalExpressionMethod } from './expression-chain'
-import type {
-  ChainedExpression,
-  ChainedStrExpression,
-  ChainedNumExpression,
-  ChainedDateExpression,
-} from './expression-chain'
+import { assertSubqueryPagination } from './subquery-guard'
+import { aggregate } from './aggregates'
+import { installExpressionExtensions } from './expression-extensions'
 
 type Callable = (...args: never[]) => unknown
 type SpecialMethod =
   | '__type'
+  | 'concat'
   | 'position'
   | 'length'
   | 'plus'
@@ -48,7 +43,7 @@ type Lift<T> = {
   >(
     expression: E,
     ...args: Parameters<Extract<E[K], Callable>>
-  ) => ChainedExpression<ReturnType<Extract<E[K], Callable>>>
+  ) => ReturnType<Extract<E[K], Callable>>
 }
 type Numeric =
   | NumExpression<number>
@@ -59,11 +54,11 @@ type ValueOf<E extends ExpressionLike> =
   ReturnType<E['__type']> extends { readonly __t?: infer T } ? T : never
 type ResultOf<E extends ExpressionLike, V> =
   ReturnType<E['__type']> extends { numExpression: true }
-    ? ChainedNumExpression<Extract<V, number | string | null | undefined>>
+    ? NumExpression<Extract<V, number | string | null | undefined>>
     : ReturnType<E['__type']> extends { strExpression: true }
-      ? ChainedStrExpression<Extract<V, string | null | undefined>>
+      ? StrExpression<Extract<V, string | null | undefined>>
       : ReturnType<E['__type']> extends { dateExpression: true }
-        ? ChainedDateExpression<Extract<V, Date | null | undefined>>
+        ? DateExpression<Extract<V, Date | null | undefined>>
         : ReturnType<E['__type']> extends { enumSetExpression: true }
           ? EnumSetExpression<Extract<V, string | null | undefined>>
           : ReturnType<E['__type']> extends { cmpExpression: true }
@@ -86,31 +81,23 @@ interface Arithmetic {
   <T extends number | string | null | undefined, U extends number | string | null | undefined>(
     expression: NumExpression<T>,
     value: NonNullable<U> | NumExpression<U>,
-  ): ChainedNumExpression<__MergeNumType<T, U>>
+  ): NumExpression<__MergeNumType<T, U>>
 }
 type DateArithmetic = <T extends Date | null | undefined>(
   expression: DateExpression<T>,
   value: number,
   unit: TimeUnit,
-) => ChainedDateExpression<T>
+) => DateExpression<T>
 
 interface NumericAggregate {
-  <E extends Numeric>(
-    expression: E,
-  ): ChainedNumExpression<Extract<ValueOf<E>, number | string> | null>
-  (expression: Numeric, options: { as: 'number' }): ChainedNumExpression<number | null>
-  (expression: Numeric, options: { as: 'string' }): ChainedNumExpression<string | null>
+  <E extends Numeric>(expression: E): NumExpression<Extract<ValueOf<E>, number | string> | null>
+  (expression: Numeric, options: { as: 'number' }): NumExpression<number | null>
+  (expression: Numeric, options: { as: 'string' }): NumExpression<string | null>
 }
 type MinMax = {
-  <T extends string | null | undefined>(
-    expression: StrExpression<T>,
-  ): ChainedStrExpression<string | null>
-  <E extends Numeric>(
-    expression: E,
-  ): ChainedNumExpression<Extract<ValueOf<E>, number | string> | null>
-  <T extends Date | null | undefined>(
-    expression: DateExpression<T>,
-  ): ChainedDateExpression<Date | null>
+  <T extends string | null | undefined>(expression: StrExpression<T>): StrExpression<string | null>
+  <E extends Numeric>(expression: E): NumExpression<Extract<ValueOf<E>, number | string> | null>
+  <T extends Date | null | undefined>(expression: DateExpression<T>): DateExpression<Date | null>
 } & typeof dsl.min
 
 export type QueryFunctions<D extends Dialect = Dialect> = DialectFunctionsFor<D> &
@@ -135,14 +122,14 @@ export type QueryFunctions<D extends Dialect = Dialect> = DialectFunctionsFor<D>
     readonly avg: NumericAggregate
     readonly min: MinMax
     readonly max: MinMax
-    readonly count: (expression?: ExpressionLike) => ChainedNumExpression<number>
-    readonly constant: (value: number) => ChainedNumExpression<number>
+    readonly count: (expression?: ExpressionLike) => NumExpression<number>
+    readonly constant: (value: number) => NumExpression<number>
     readonly native: {
-      str(...args: Parameters<typeof dsl.native.str>): ChainedStrExpression<string>
-      date(...args: Parameters<typeof dsl.native.date>): ChainedDateExpression<Date>
+      str(...args: Parameters<typeof dsl.native.str>): StrExpression<string>
+      date(...args: Parameters<typeof dsl.native.date>): DateExpression<Date>
       num: {
-        (...args: Parameters<typeof dsl.native.num>): ChainedNumExpression<number>
-        asString(...args: Parameters<typeof dsl.native.num.asString>): ChainedNumExpression<string>
+        (...args: Parameters<typeof dsl.native.num>): NumExpression<number>
+        asString(...args: Parameters<typeof dsl.native.num.asString>): NumExpression<string>
       }
     }
     readonly plus: Arithmetic & DateArithmetic
@@ -163,81 +150,24 @@ export type QueryFunctions<D extends Dialect = Dialect> = DialectFunctionsFor<D>
     readonly subQuery: import('./query-enhancer').EnhancedSubQueryCreator<D>
     readonly baseQuery: import('./query-enhancer').EnhancedBaseQueryCreator<D>
     readonly concat: (
-      ...values: [
-        string | StrExpression<string> | StrExpression<string | null>,
-        ...(string | StrExpression<string> | StrExpression<string | null>)[],
-      ]
-    ) => ChainedStrExpression<string | null>
-    readonly rtrim: <T extends string | null>(
-      expression: StrExpression<T>,
-    ) => ChainedStrExpression<T>
+      ...values: [Exclude<StringArgument, null>, ...Exclude<StringArgument, null>[]]
+    ) => StrExpression<string | null>
+    readonly rtrim: <T extends string | null>(expression: StrExpression<T>) => StrExpression<T>
     readonly length: <T extends string | null | undefined>(
       expression: StrExpression<T>,
-    ) => ChainedNumExpression<T extends string ? number : number | null>
+    ) => NumExpression<T extends string ? number : number | null>
     readonly position: <T extends string | null>(
       expression: StrExpression<T>,
       substring: string,
       start?: number | NumExpression<number>,
-    ) => ChainedNumExpression<number | null>
-    readonly scalar: <T extends ExpressionLike>(expression: T) => ChainedExpression<T>
-    readonly aggregate: <T extends ExpressionLike>(expression: T) => ChainedExpression<T>
+    ) => NumExpression<number | null>
+    readonly scalar: <T extends ExpressionLike>(expression: T) => T
+    readonly aggregate: <T extends ExpressionLike>(expression: T) => T
     readonly metadata: typeof getFunctionMetadata
   }
 
-class AggregateString extends spi.AbstractStrExpr {
-  constructor(readonly source: spi.AggregateExpr<string | number>) {
-    super()
-  }
-  override accept(visitor: spi.Visitor): void {
-    visitor.visitAggregateExpr(this.source)
-  }
-}
-class AggregateDate extends spi.AbstractDtExpr {
-  constructor(readonly source: spi.AggregateExpr<string | number>) {
-    super()
-  }
-  override accept(visitor: spi.Visitor): void {
-    visitor.visitAggregateExpr(this.source)
-  }
-}
-class AggregateEnumSet extends spi.AbstractEsExpr<string> {
-  constructor(readonly source: spi.AggregateExpr<string | number>) {
-    super()
-  }
-  override accept(visitor: spi.Visitor): void {
-    visitor.visitAggregateExpr(this.source)
-  }
-}
-
-/** Own the aggregate node so metadata/decoding never modify a caller's expression. */
-function aggregate(
-  op: 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX',
-  input?: unknown,
-  options?: { as: 'number' | 'string' },
-): unknown {
-  if (options !== undefined && options.as !== 'number' && options.as !== 'string')
-    throw new TypeError('Expected numeric return mode number or string')
-  const expr = input as spi.AbstractExpr<string | number> | undefined
-  const source = new spi.AggregateExpr(op, expr)
-  let result: unknown = source
-  if (op === 'MIN' || op === 'MAX') {
-    if (expr instanceof spi.AbstractStrExpr) result = new AggregateString(source)
-    else if (expr instanceof spi.AbstractDtExpr) result = new AggregateDate(source)
-    else if (expr instanceof spi.AbstractEsExpr) result = new AggregateEnumSet(source)
-  }
-  const explicitDataType =
-    options?.as === 'string'
-      ? spi.ExplicitDataType.STRING
-      : options?.as === 'number' ||
-          (op === 'AVG' && expr?.explicitDataType !== spi.ExplicitDataType.STRING)
-        ? spi.ExplicitDataType.FLOAT
-        : source.explicitDataType
-  Object.defineProperty(result, 'explicitDataType', { value: explicitDataType })
-  markFunction(source, { name: op.toLowerCase(), kind: 'aggregate' })
-  return markFunction(result, { name: op.toLowerCase(), kind: 'aggregate' })
-}
-
 const EXPRESSION_METHODS = [
+  'position',
   'asc',
   'desc',
   'eq',
@@ -304,6 +234,7 @@ export function createQueryFunctions<D extends Dialect>(
   baseQuery: Callable,
   profile: DialectProfile<D>,
 ): QueryFunctions<D> {
+  installExpressionExtensions()
   const dialect = profile.family
   const functions: Record<string, unknown> = {}
   for (const [name, value] of Object.entries(dsl)) {
@@ -314,10 +245,10 @@ export function createQueryFunctions<D extends Dialect>(
   }
   for (const name of EXPRESSION_METHODS) {
     functions[name] = (expression: object, ...args: unknown[]) => {
-      const method = originalExpressionMethod(expression, name)
+      const method = Reflect.get(expression, name) as Callable
       if (name === 'coalesce' && args.length === 0)
         throw new TypeError('coalesce requires at least one fallback')
-      return markFunction(Reflect.apply(method, expression, name === 'coalesce' ? [args] : args), {
+      return markFunction(Reflect.apply(method, expression, args), {
         name,
         kind: 'scalar',
       })
@@ -353,57 +284,22 @@ export function createQueryFunctions<D extends Dialect>(
   }
   functions.subQuery = subQuery
   functions.baseQuery = baseQuery
-  functions.concat = (...values: unknown[]) => {
-    if (values.length === 0) throw new TypeError('fn.concat requires at least one argument')
-    const exprs = values.map((value) => (typeof value === 'string' ? sqlArgument(value) : value))
-    if (!exprs.every(isExpression)) throw new TypeError('fn.concat requires strings or expressions')
-    const parts =
-      dialect === 'mysql' || dialect === 'sqlserver'
-        ? callParts('concat', exprs)
-        : ['(', ...exprs.flatMap((expr, index) => (index === 0 ? [expr] : [' || ', expr])), ')']
-    return sqlExpression('concat', 'string', 'scalar', parts, dialect)
-  }
+  functions.concat = (...values: unknown[]) => deferredConcat(values)
+
   for (const kind of ['scalar', 'aggregate'] as const satisfies readonly FunctionKind[]) {
-    functions[kind] = <T extends ExpressionLike>(expression: T) =>
-      markFunction(
+    functions[kind] = <T extends ExpressionLike>(expression: T) => {
+      assertSubqueryPagination(expression)
+      return markFunction(
         expression,
         { ...getFunctionMetadata(expression), name: 'annotated', kind },
         true,
       )
+    }
   }
   functions.metadata = getFunctionMetadata
-  const portable = createPortableFunctions(profile)
-  Object.assign(functions, portable)
-  Object.assign(functions, createStringFunctions(profile))
-  functions.length = (value: Parameters<typeof portable.charLength>[0]) =>
-    markFunction(portable.charLength(value), { name: 'length', kind: 'scalar', dialect }, true)
+
+  Object.assign(functions, createPortableFacade())
+
   Object.assign(functions, createDialectFunctions(dialect))
-  const enhance = createExpressionEnhancer(
-    [...EXPRESSION_METHODS, 'position'],
-    (name, expression, args) =>
-      Reflect.apply(functions[name] as Callable, undefined, [expression, ...args]),
-  )
-  const wrap = (fn: Callable): Callable => {
-    const wrapped = (...args: unknown[]) => enhance(Reflect.apply(fn, undefined, args))
-    for (const [name, method] of Object.entries(fn)) {
-      if (typeof method === 'function')
-        Object.defineProperty(wrapped, name, { value: wrap(method as Callable), enumerable: true })
-    }
-    return wrapped
-  }
-  // Include namespace and native-template results, not only the common functions.
-  for (const [name, value] of Object.entries(functions)) {
-    if (typeof value === 'function') functions[name] = wrap(value as Callable)
-    else if (typeof value === 'object' && value !== null) {
-      functions[name] = Object.freeze(
-        Object.fromEntries(
-          Object.entries(value).map(([key, method]) => [
-            key,
-            typeof method === 'function' ? wrap(method as Callable) : method,
-          ]),
-        ),
-      )
-    }
-  }
   return Object.freeze(functions) as unknown as QueryFunctions<D>
 }

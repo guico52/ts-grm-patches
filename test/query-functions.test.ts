@@ -1,4 +1,6 @@
-import { EntityManager, dsl, model, prop, spi } from '@ts-grm/core'
+import * as portableAdapters from '../src/portable-functions'
+import * as sqlNodes from '../src/sql-function'
+import { EntityManager, dsl, err, model, prop, spi } from '@ts-grm/core'
 import type { NumExpression } from '@ts-grm/core'
 import {
   newSqlClient,
@@ -9,11 +11,12 @@ import {
   Oracle12Drivier,
   FilterManager,
 } from '@ts-grm/sql'
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import { enhanceClient, getFunctionMetadata, newSqlClient as deriveClient } from '../src/index'
 import { newSqlClient as newSqliteClient } from '../src/sqlite'
-import type { ChainedNumExpression, ChainedStrExpression, QueryConditions } from '../src/index'
+import type { StrExpression } from '@ts-grm/core'
+import type { QueryConditions } from '../src/index'
 import type { Dialect, DialectFunctions, EnhancedSqlClient, QueryFunctions } from '../src/index'
 import type { DialectOptions } from '../src/index'
 import { driverFamily } from '../src/dialect-context'
@@ -122,13 +125,26 @@ describe('portable functions specialized by the bound dialect', () => {
       )
     }
     const { client } = capture()
-    client.createQuery(SALES, (q, t) => {
-      expect(() => q.fn.left(t.category, -1)).toThrow('safe integer')
-      expect(() => q.fn.substring(t.category, 0)).toThrow('safe integer')
-      expect(() => q.fn.position(t.category, 'x', 0)).toThrow('safe integer')
-      expect(() => q.fn.rpad(t.category, 0.5)).toThrow('safe integer')
-      return q.select(t.id)
-    })
+    for (const build of [
+      (t: { category: StrExpression<string> }) => t.category.left(-1),
+      (t: { category: StrExpression<string> }) => t.category.substring(0),
+      (t: { category: StrExpression<string> }) => t.category.substring(1, -1),
+      (t: { category: StrExpression<string> }) => t.category.position('x', 0),
+      (t: { category: StrExpression<string> }) => t.category.rpad(0.5),
+    ]) {
+      expect(() => client.createQuery(SALES, (q, t) => q.select(build(t)))).toThrow('safe integer')
+    }
+    for (const build of [
+      (fn: QueryFunctions<'postgres'>, name: StrExpression<string>) => fn.left(name, -1),
+      (fn: QueryFunctions<'postgres'>, name: StrExpression<string>) => fn.substring(name, 0),
+      (fn: QueryFunctions<'postgres'>, name: StrExpression<string>) => fn.substring(name, 1, -1),
+      (fn: QueryFunctions<'postgres'>, name: StrExpression<string>) => fn.position(name, 'x', 0),
+      (fn: QueryFunctions<'postgres'>, name: StrExpression<string>) => fn.rpad(name, 0.5),
+    ]) {
+      expect(() => client.createQuery(SALES, (q, t) => q.select(build(q.fn, t.category)))).toThrow(
+        'safe integer',
+      )
+    }
   })
   it.each([
     ['postgres', 'ceil(', 'trunc(', 'ln(', 'log(', 'octet_length(', 'char_length('],
@@ -202,27 +218,39 @@ describe('portable functions specialized by the bound dialect', () => {
       ),
     ).toThrow('NESTED_AGGREGATE')
     const { client: other } = capture([], 'mysql')
-    expect(() => other.createQuery(SALES, (q) => q.select(client.fn.abs(1)))).toThrow(
-      'DIALECT_MISMATCH',
-    )
+    expect(() => other.createQuery(SALES, (q) => q.select(client.fn.abs(1)))).not.toThrow()
   })
 
   it('requires explicit SQLite optional capabilities and respects overrides', () => {
     const { client } = capture([], 'sqlite')
-    expect(() => client.fn.sqrt(4)).toThrow('sqlite.mathFunctions')
-    expect(() => client.fn.constant(4).sqrt()).toThrow('sqlite.mathFunctions')
-    expect(() => client.fn.octetLength('中')).toThrow('UNSUPPORTED_FUNCTION')
+    expect(() => client.createQuery(SALES, (q) => q.select(client.fn.sqrt(4)))).toThrow(
+      'sqlite.mathFunctions',
+    )
+    expect(() => client.createQuery(SALES, (q) => q.select(client.fn.constant(4).sqrt()))).toThrow(
+      'sqlite.mathFunctions',
+    )
+    expect(() => client.createQuery(SALES, (q) => q.select(client.fn.octetLength('中')))).toThrow(
+      'UNSUPPORTED_FUNCTION',
+    )
     const old = capture([], 'sqlite', { serverVersion: [3, 42, 9] }).client
-    expect(() => old.fn.octetLength('中')).toThrow('UNSUPPORTED_FUNCTION')
+    expect(() => old.createQuery(SALES, (q) => q.select(old.fn.octetLength('中')))).toThrow(
+      'UNSUPPORTED_FUNCTION',
+    )
     const supported = capture([], 'sqlite', { serverVersion: [3, 43] }).client
-    expect(() => supported.fn.octetLength('中')).not.toThrow()
+    expect(() =>
+      supported.createQuery(SALES, (q) => q.select(supported.fn.octetLength('中'))),
+    ).not.toThrow()
     const disabled = capture([], 'sqlite', {
       serverVersion: [3, 50],
       capabilities: { 'sqlite.octetLength': false },
     }).client
-    expect(() => disabled.fn.octetLength('中')).toThrow('UNSUPPORTED_FUNCTION')
+    expect(() =>
+      disabled.createQuery(SALES, (q) => q.select(disabled.fn.octetLength('中'))),
+    ).toThrow('UNSUPPORTED_FUNCTION')
     const custom = capture([], 'sqlite', { capabilities: { 'sqlite.octetLength': true } }).client
-    expect(() => custom.fn.octetLength('中')).not.toThrow()
+    expect(() =>
+      custom.createQuery(SALES, (q) => q.select(custom.fn.octetLength('中'))),
+    ).not.toThrow()
   })
 
   it('validates the portable input contract before query execution', () => {
@@ -351,18 +379,14 @@ describe('q.fn native API extensions', () => {
     const { client } = capture([['2.75', '2.75', 'a', 'b', '2']])
     const result = await client
       .createQuery(SALES, (q, t) => {
-        expectTypeOf(q.fn.avg(t.amount)).toEqualTypeOf<ChainedNumExpression<number | null>>()
+        expectTypeOf(q.fn.avg(t.amount)).toEqualTypeOf<NumExpression<number | null>>()
         expectTypeOf(q.fn.sum(t.amount, { as: 'string' })).toEqualTypeOf<
-          ChainedNumExpression<string | null>
+          NumExpression<string | null>
         >()
-        expectTypeOf(q.fn.lower(t.category)).toEqualTypeOf<ChainedStrExpression<string>>()
-        expectTypeOf(q.fn.position(t.category, 'x')).toEqualTypeOf<
-          ChainedNumExpression<number | null>
-        >()
-        expectTypeOf(q.fn.times(t.amount, 2)).toEqualTypeOf<ChainedNumExpression<number>>()
-        expectTypeOf(q.fn.coalesce(t.label, 'fallback')).toEqualTypeOf<
-          ChainedStrExpression<string>
-        >()
+        expectTypeOf(q.fn.lower(t.category)).toEqualTypeOf<StrExpression<string>>()
+        expectTypeOf(q.fn.position(t.category, 'x')).toEqualTypeOf<NumExpression<number | null>>()
+        expectTypeOf(q.fn.times(t.amount, 2)).toEqualTypeOf<NumExpression<number>>()
+        expectTypeOf(q.fn.coalesce(t.label, 'fallback')).toEqualTypeOf<StrExpression<string>>()
         return q.select({
           avg: q.fn.avg(t.amount),
           text: q.fn.sum(t.amount, { as: 'string' }),
@@ -750,7 +774,7 @@ describe('q.fn native API extensions', () => {
         q.select(t.id)
         return q.select(t.category)
       }),
-    ).toThrow('MULTIPLE_SELECTIONS')
+    ).not.toThrow()
   })
 
   it('recursively enhances chained numeric functions without changing aggregate grouping', async () => {
@@ -838,8 +862,12 @@ describe('q.fn native API extensions', () => {
     expect(statements[0]!.text).toContain('coalesce(')
     expect(statements[0]!.text).toContain('select distinct')
     const subquery = client.fn.subQuery(SALES, (sq, st) => sq.select(st.amount))
-    expect(() => subquery.limit(1)).toThrow('UNSUPPORTED_SUBQUERY_PAGINATION')
-    expect(() => subquery.offset(1)).toThrow('UNSUPPORTED_SUBQUERY_PAGINATION')
+    expect(() => client.createQuery(SALES, (q) => q.select(subquery.limit(1).asValue()))).toThrow(
+      'UNSUPPORTED_SUBQUERY_PAGINATION',
+    )
+    expect(() => client.createQuery(SALES, (q) => q.select(subquery.offset(1).asValue()))).toThrow(
+      'UNSUPPORTED_SUBQUERY_PAGINATION',
+    )
     const raw = dsl.subQuery(SALES, (sq, st) => sq.select(st.amount)).limit(1)
     expect(() => client.fn.scalar(raw)).toThrow('UNSUPPORTED_SUBQUERY_PAGINATION')
   })
@@ -890,8 +918,8 @@ describe('q.fn native API extensions', () => {
     const { client, statements } = capture()
     const { client: other, statements: otherStatements } = capture()
     const value = client.fn.constant(3)
-    const plus = value.plus
-    expect(value.plus).toBe(plus)
+    const plus = value.plus.bind(value)
+    expect(Object.hasOwn(value, 'plus')).toBe(false)
     await other
       .createQuery(SALES, (q, t) =>
         q.select({ first: plus(2).abs(), second: q.fn.plus(value, 4).round() }).where(t.id.eq(1)),
@@ -904,7 +932,7 @@ describe('q.fn native API extensions', () => {
     expect(getFunctionMetadata(plus(2))?.kind).toBe('scalar')
   })
 
-  it('keeps own native method overrides isolated from cached prototype plans', async () => {
+  it('preserves own native method overrides without instance hooks', async () => {
     const { client, statements } = capture()
     client.fn.constant(1).plus(1) // Warm the ordinary prototype plan first.
     const custom = dsl.constant(1)
@@ -928,7 +956,8 @@ describe('q.fn native API extensions', () => {
     expect(statements[0]!.values).toEqual([2])
     const readOnly = dsl.constant(1)
     Object.defineProperty(readOnly, 'plus', { value: readOnly.plus, configurable: false })
-    expect(() => client.fn.scalar(readOnly)).toThrow('read-only expression method plus')
+    expect(client.fn.scalar(readOnly)).toBe(readOnly)
+    expect(Object.getOwnPropertyDescriptor(readOnly, 'plus')!.value).toBe(readOnly.plus)
   })
 
   it('does not reuse outside-aggregate analysis to allow cached nested aggregates', () => {
@@ -1268,5 +1297,168 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
     } finally {
       database.close()
     }
+  })
+})
+
+describe('in-place native expression enhancement', () => {
+  it('mixes field methods and native DSL without instance hooks', async () => {
+    const { client, statements } = capture()
+    await client
+      .createQuery(SALES, (q, t) => {
+        const total = t.amount.times(t.tax).sum().abs().round(2).coalesce(0)
+        expect(Object.hasOwn(total, 'round')).toBe(false)
+        expect(Object.hasOwn(total, 'coalesce')).toBe(false)
+        const name = t.category.min().trim().lower()
+        const date = t.createdAt.max().plus(1, 'DAYS')
+        const predicate = t.amount.gt(0).and(t.id.eqIf(undefined)).not().not()
+        return q
+          .select({ total, name, date, native: dsl.sum(t.amount).abs().round(2) })
+          .where(predicate)
+      })
+      .fetchList()
+    expect(statements[0]!.text).toContain('round(cast(abs(sum(')
+    expect(statements[0]!.text).toContain('min(')
+    expect(statements[0]!.text).toContain('max(')
+  })
+
+  it('keeps native string nodes for direct and facade calls', () => {
+    const { client } = capture()
+    client.createQuery(SALES, (q, t) => {
+      const direct = t.category.lpad(8, '0')
+      const facade = q.fn.lpad(t.category, 8, '0')
+      expect(Object.getPrototypeOf(facade)).toBe(Object.getPrototypeOf(direct))
+      class Visitor extends spi.AbstractVisitor {
+        pads = 0
+        override visitPadExpr(expr: spi.PadExpr) {
+          this.pads++
+          super.visitPadExpr(expr)
+        }
+      }
+      const visitor = new Visitor()
+      ;(direct as unknown as spi.Node).accept(visitor)
+      ;(facade as unknown as spi.Node).accept(visitor)
+      expect(visitor.pads).toBe(2)
+      return q.select(direct)
+    })
+  })
+
+  it('lowers one neutral expression using the rendering client', async () => {
+    const pg = capture()
+    const mysql = capture([], 'mysql')
+    const length = dsl.native.str`'abc'`.octetLength()
+    await pg.client.createQuery(SALES, (q) => q.select(length)).fetchList()
+    await mysql.client.createQuery(SALES, (q) => q.select(length)).fetchList()
+    expect(pg.statements[0]!.text).toContain('octet_length(')
+    expect(mysql.statements[0]!.text).toContain('octet_length(')
+    const concat = dsl.native.str`'a'`.concat('b')
+    await pg.client.createQuery(SALES, (q) => q.select(concat)).fetchList()
+    await mysql.client.createQuery(SALES, (q) => q.select(concat)).fetchList()
+    expect(pg.statements[1]!.text).toContain(' || ')
+    expect(mysql.statements[1]!.text).toContain('concat(')
+  })
+
+  it('does not mistake an argument render failure for an unsupported outer function', async () => {
+    const { client } = capture()
+    const failure = new err.StateError('The child does not support rendering')
+    let attempts = 0
+    class Child extends spi.AbstractStrExpr {
+      override accept(visitor: spi.Visitor) {
+        if ('sqlClient' in visitor) {
+          attempts++
+          throw failure
+        }
+        visitor.visitNativeExpr({ parts: ["'child'"] })
+      }
+    }
+    const query = client.createQuery(SALES, (q) => q.select(new Child().trim()))
+    await expect(query.fetchList()).rejects.toBe(failure)
+    expect(attempts).toBe(1)
+  })
+
+  it('checks portable capabilities at rendering for an unenhanced native client', async () => {
+    const { original } = capture([], 'sqlite')
+    const value = dsl.native.num`4`.sqrt()
+    const raw = newSqlClient(original, {})
+    expect('fn' in raw).toBe(false)
+    const query = raw.createQuery(SALES, (q) => q.select(value))
+    await expect(query.fetchList()).rejects.toThrow('sqlite.mathFunctions')
+  })
+
+  it('preserves countDistinct aggregate boundaries during automatic grouping', async () => {
+    const { client, statements } = capture()
+    await client
+      .createQuery(SALES, (q, t) =>
+        q
+          .select({
+            category: t.category,
+            count: t.id.countDistinct().plus(1),
+          })
+          .autoGroupBy(),
+      )
+      .fetchList()
+    expect(statements[0]!.text).toMatch(/count\(distinct /i)
+    const group = statements[0]!.text.split(/group by/i)[1]!
+    expect(group).toContain('CATEGORY')
+    expect(group).not.toMatch(/\.ID\b/)
+  })
+})
+
+describe('expression review regressions', () => {
+  it('validates without lowering and creates one adapter per rendering profile', async () => {
+    const factory = vi.spyOn(portableAdapters, 'createPortableFunctions')
+    const nodes = vi.spyOn(sqlNodes, 'sqlExpression')
+    try {
+      const first = capture()
+      const value = dsl.native.num`3`.abs().round(2)
+      const query = first.client.createQuery(SALES, (q) => q.select(value))
+      expect(factory).not.toHaveBeenCalled()
+      expect(nodes).not.toHaveBeenCalled()
+      await query.fetchList()
+      expect(factory).toHaveBeenCalledTimes(1)
+      expect(nodes).toHaveBeenCalledTimes(2)
+      await query.fetchList()
+      expect(factory).toHaveBeenCalledTimes(1)
+      const second = capture()
+      await second.client.createQuery(SALES, (q) => q.select(value)).fetchList()
+      expect(factory).toHaveBeenCalledTimes(2)
+    } finally {
+      factory.mockRestore()
+      nodes.mockRestore()
+    }
+  })
+
+  it('shares concat contracts and preserves identity for a no-op chain', () => {
+    const { client } = capture()
+    client.createQuery(SALES, (q, t) => {
+      expect(t.category.concat()).toBe(t.category)
+      expect(q.fn.concat(t.category)).toBe(t.category)
+      for (const invalid of [1, true, null, undefined, {}, t.amount]) {
+        expect(() => Reflect.apply(t.category.concat, t.category, [invalid])).toThrow(
+          'concat requires strings',
+        )
+        expect(() => Reflect.apply(q.fn.concat, undefined, [t.category, invalid])).toThrow(
+          'concat requires strings',
+        )
+      }
+      expect(() => Reflect.apply(q.fn.concat, undefined, [])).toThrow('at least one argument')
+      return q.select(t.category.concat('!'))
+    })
+  })
+
+  it.each(['postgres', 'mysql', 'sqlite', 'SqlServer2012', 'Oracle12'])(
+    'avoids a one-operand CONCAT on %s',
+    async (dialect) => {
+      const { client, statements } = capture([], dialect)
+      await client.createQuery(SALES, (q) => q.select(q.fn.concat('literal'))).fetchList()
+      expect(statements[0]!.text).not.toContain('concat(')
+      expect(statements[0]!.values).toEqual(['literal'])
+    },
+  )
+
+  it('checks native string literal ranges on raw client rendering too', async () => {
+    const { original } = capture()
+    const raw = newSqlClient(original, {})
+    const query = raw.createQuery(SALES, (q, t) => q.select(t.category.substring(1, -1)))
+    await expect(query.fetchList()).rejects.toThrow('safe integer >= 0')
   })
 })

@@ -1,4 +1,9 @@
+import { validateNativeStringIndexes } from './string-arguments'
+import { assertSubqueryPagination } from './subquery-guard'
 import { ExpressionOrder, spi } from '@ts-grm/core'
+import { isPortableFunction } from './function-contract'
+import { createStringFunctions } from './string-functions'
+import type { DialectProfile } from './dialect-context'
 import type { ExpressionLike } from '@ts-grm/core'
 
 export type FunctionKind = 'scalar' | 'aggregate' | 'opaque'
@@ -12,8 +17,40 @@ export interface FunctionMetadata {
 const metadata = new WeakMap<object, Readonly<FunctionMetadata>>()
 
 /** Metadata belongs to the expression, not a process-global current query. */
+function declaredMetadata(expression: object): Readonly<FunctionMetadata> | undefined {
+  return (
+    metadata.get(expression) ??
+    (isPortableFunction(expression)
+      ? { name: expression.fnName, kind: expression.kind }
+      : undefined)
+  )
+}
 export function getFunctionMetadata(expression: object): Readonly<FunctionMetadata> | undefined {
-  return metadata.get(expression)
+  const declared = declaredMetadata(expression)
+  if (declared || !isExpression(expression)) return declared
+  let result: FunctionMetadata | undefined
+  expression.accept(
+    visitor((method, payload) => {
+      if (method === 'visitAggregateExpr') {
+        result = {
+          name: (payload as spi.AggregateExpr<number>).op.toLowerCase(),
+          kind: 'aggregate',
+        }
+      } else if (
+        [
+          'visitCoalesceExpr',
+          'visitBinaryNumExpr',
+          'visitUnaryMinusExpr',
+          'visitLowerExpr',
+          'visitUpperExpr',
+          'visitTrimExpr',
+          'visitLengthExpr',
+        ].includes(method)
+      )
+        result = { name: method.slice(5, -4).toLowerCase(), kind: 'scalar' }
+    }),
+  )
+  return result
 }
 
 export function markFunction<T>(value: T, info: FunctionMetadata, replace = false): T {
@@ -75,7 +112,7 @@ function shapeOf(node: spi.Node): Shape {
   )
   if (method === undefined)
     throw new QuerySemanticError('UNKNOWN_EXPRESSION', 'Expression has no visitor event')
-  const info = metadata.get(node)
+  const info = declaredMetadata(node)
   const shape: Shape = {
     method,
     children: [],
@@ -123,12 +160,16 @@ function shapeOf(node: spi.Node): Shape {
 }
 
 class DialectValidator extends spi.AbstractVisitor {
-  constructor(private readonly dialect: string) {
+  constructor(
+    private readonly dialect: string,
+    private readonly profile?: DialectProfile,
+  ) {
     super()
   }
   private readonly seen = new WeakSet<object>()
   override visitNativeExpr(expr: spi.NativeExprContract): void {
-    const source = getFunctionMetadata(expr)
+    if (isPortableFunction(expr) && this.profile) expr.validate(this.profile)
+    const source = declaredMetadata(expr)
     if (source?.dialect !== undefined && source.dialect !== this.dialect) {
       throw new QuerySemanticError(
         'DIALECT_MISMATCH',
@@ -136,6 +177,31 @@ class DialectValidator extends spi.AbstractVisitor {
       )
     }
     super.visitNativeExpr(expr)
+  }
+  override visitLeftExpr(expr: spi.LeftExpr): void {
+    validateNativeStringIndexes('Left', expr)
+    super.visitLeftExpr(expr)
+  }
+  override visitRightExpr(expr: spi.RightExpr): void {
+    validateNativeStringIndexes('Right', expr)
+    super.visitRightExpr(expr)
+  }
+  override visitPadExpr(expr: spi.PadExpr): void {
+    validateNativeStringIndexes('Pad', expr)
+    super.visitPadExpr(expr)
+  }
+  override visitSubstringExpr(expr: spi.SubstringExpr): void {
+    validateNativeStringIndexes('Substring', expr)
+    super.visitSubstringExpr(expr)
+  }
+  override visitPositionExpr(expr: spi.PositionExpr): void {
+    validateNativeStringIndexes('Position', expr)
+    super.visitPositionExpr(expr)
+  }
+  override visitReverseExpr(expr: spi.ReverseExpr): void {
+    if (this.profile && ['sqlite', 'oracle'].includes(this.profile.family))
+      createStringFunctions(this.profile).reverse(expr.expr)
+    super.visitReverseExpr(expr)
   }
   override visitShadowExpr(expr: spi.ShadowExprContract): void {
     const original = expr.anchor.original
@@ -145,6 +211,7 @@ class DialectValidator extends spi.AbstractVisitor {
     }
   }
   override visitAtomQuery(query: spi.AtomQueryContract): void {
+    assertSubqueryPagination(query)
     if (this.seen.has(query)) return
     this.seen.add(query)
     super.visitAtomQuery(query)
@@ -167,8 +234,12 @@ class DialectValidator extends spi.AbstractVisitor {
   }
 }
 /** Validate provenance independently of autoGroupBy; raw SQL remains opaque. */
-export function validateFunctionDialects(values: readonly unknown[], dialect: string): void {
-  const validator = new DialectValidator(dialect)
+export function validateFunctionDialects(
+  values: readonly unknown[],
+  dialect: string,
+  profile?: DialectProfile,
+): void {
+  const validator = new DialectValidator(dialect, profile)
   for (const value of values) {
     const expression = value instanceof ExpressionOrder ? value.expression : value
     if (isExpression(expression)) expression.accept(validator)

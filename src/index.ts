@@ -1,3 +1,5 @@
+// Retain native interface merging in bundled declarations without runtime installation.
+export type {} from './expression-extensions'
 export { applyPatches } from './apply-patches'
 export { enhanceClient } from './query-enhancer'
 export { newSqlClient } from './client-factory'
@@ -23,12 +25,6 @@ export type {
   QueryConditions,
   SelectedQuery,
 } from './query-enhancer'
-export type {
-  ChainedExpression,
-  ChainedStrExpression,
-  ChainedNumExpression,
-  ChainedDateExpression,
-} from './expression-chain'
 export type { QueryFunctions } from './query-functions'
 export type { PortableFunctions, NumericArgument } from './portable-functions'
 export { getFunctionMetadata, QuerySemanticError } from './function-semantics'

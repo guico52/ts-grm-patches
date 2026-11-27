@@ -1,3 +1,4 @@
+import { validateStringIndex } from './string-arguments'
 import { spi } from '@ts-grm/core'
 import type { DialectProfile } from './dialect-context'
 import { QuerySemanticError } from './function-semantics'
@@ -21,10 +22,7 @@ export function createStringFunctions(profile: DialectProfile) {
   const num = (name: string, parts: Parts) =>
     sqlExpression(name, 'number', 'scalar', parts, dialect)
   const index = (value: Index, minimum: number) => {
-    if (typeof value !== 'number' && !(value instanceof spi.AbstractNumExpr))
-      throw new TypeError('String index/length requires a number or numeric expression')
-    if (typeof value === 'number' && (!Number.isSafeInteger(value) || value < minimum))
-      throw new TypeError(`String index/length must be a safe integer >= ${minimum}`)
+    validateStringIndex(value, minimum)
     return sqlArgument(value)
   }
   const substring = (expression: spi.AbstractStrExpr, start: Index, length?: Index) => {

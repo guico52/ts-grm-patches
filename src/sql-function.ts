@@ -2,20 +2,16 @@ import { dsl, spi } from '@ts-grm/core'
 import type { Expression, ExpressionLike } from '@ts-grm/core'
 import { isExpression, markFunction } from './function-semantics'
 import type { FunctionKind } from './function-semantics'
-import type {
-  ChainedStrExpression,
-  ChainedNumExpression,
-  ChainedDateExpression,
-} from './expression-chain'
+import type { StrExpression, NumExpression, DateExpression } from '@ts-grm/core'
 
 export type SqlArgument = ExpressionLike | string | number | boolean | Date | null
 export type SqlResult = 'number' | 'string' | 'date' | 'boolean' | 'unknown'
 export type SqlFunctionResult<T extends SqlResult> = T extends 'number'
-  ? ChainedNumExpression<number | null>
+  ? NumExpression<number | null>
   : T extends 'string'
-    ? ChainedStrExpression<string | null>
+    ? StrExpression<string | null>
     : T extends 'date'
-      ? ChainedDateExpression<Date | null>
+      ? DateExpression<Date | null>
       : T extends 'boolean'
         ? Expression<boolean | null>
         : Expression<unknown>

@@ -148,7 +148,11 @@ if (!mode) {
       ['read-cached-bool-text', () => table.enabled === table.description, false],
     )
   }
-  for (const [name, fn, async] of cases) {
+  const selectedCases = process.env.BENCH_CASE
+    ? cases.filter(([name]) => name === process.env.BENCH_CASE)
+    : cases
+  assert.ok(selectedCases.length > 0, 'Unknown BENCH_CASE')
+  for (const [name, fn, async] of selectedCases) {
     await timed(fn, async, 500)
     let count = 128
     let elapsed = await timed(fn, async, count)

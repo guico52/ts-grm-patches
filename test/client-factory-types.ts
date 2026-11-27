@@ -58,8 +58,10 @@ export function checkBoundTypes(
   pgClient(mysql)
   // @ts-expect-error The Postgres entry rejects a bound MySQL client.
   pgClient(myClient(mysql))
-  // @ts-expect-error An unbound native client requires checked enhancement first.
+  const nativeCompatible: SqlClient = pg
   newSqlClient(raw)
+  pgClient(raw)
+  void nativeCompatible
   pg.createQuery(MODEL, (q, t) => {
     const text = q.fn.postgres.jsonbExtractPathText(t.data, 'name').coalesce('none').trim()
     // @ts-expect-error Root query callbacks keep the driver's family.

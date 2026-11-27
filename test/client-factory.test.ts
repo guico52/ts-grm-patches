@@ -136,7 +136,10 @@ describe('dialect-bound native client creation', () => {
 
   it('requires explicit binding before deriving an untyped native client', () => {
     const raw = nativeNewSqlClient(new PostgresDriver({} as never), {})
-    expect(() => Reflect.apply(newSqlClient, undefined, [raw])).toThrow('UNBOUND_CLIENT')
+    const derived = newSqlClient(raw)
+    expect(derived.dialect).toBe('postgres')
+    expect(derived).not.toBe(raw)
+    expect('fn' in raw).toBe(false)
     expect(newSqlClient(bindPostgres(raw)).dialect).toBe('postgres')
   })
 
