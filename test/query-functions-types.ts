@@ -68,46 +68,44 @@ export function checkFunctionTypes(client: EnhancedSqlClient): void {
     q.fn.upper(t.name).position('X').upper()
     // @ts-expect-error Function composition preserves the numeric input contract.
     q.fn.avg(t.id).coalesce('invalid')
-    return q
-      .select({
-        name,
-        fallback,
-        at,
-        sum,
-        text,
-        times,
-        nested,
-        nestedString,
-        position,
-        nullableLength,
-        date,
-        math,
-        size,
-        distinct,
-      })
-      .where(t.id.gt(0))
+    return q.where(t.id.gt(0)).select({
+      name,
+      fallback,
+      at,
+      sum,
+      text,
+      times,
+      nested,
+      nestedString,
+      position,
+      nullableLength,
+      date,
+      math,
+      size,
+      distinct,
+    })
   })
   const query = client.createQuery(FUNCTION_TYPE_MODEL, (q, t) =>
     q
+      .where(t.id.gt(0))
+      .autoGroupBy()
       .select({
         id: t.id,
         name: q.fn.min(t.name).upper().concat('!').coalesce('empty'),
         average: q.fn.avg(t.id).coalesce(0).plus(1),
-      })
-      .where(t.id.gt(0))
-      .autoGroupBy(),
+      }),
   )
   const rows: Promise<
     Array<{ readonly id: number; readonly name: string; readonly average: number }>
   > = query.fetchList()
-  const scalar = client.createQuery(FUNCTION_TYPE_MODEL, (q, t) => q.select(t.id).where(t.id.gt(0)))
+  const scalar = client.createQuery(FUNCTION_TYPE_MODEL, (q, t) => q.where(t.id.gt(0)).select(t.id))
   const ids: Promise<number[]> = scalar.fetchList()
   const tuple = client.createQuery(FUNCTION_TYPE_MODEL, (q, t) =>
-    q.select(t.id, t.name).where(t.id.gt(0)),
+    q.where(t.id.gt(0)).select(t.id, t.name),
   )
   const tuples: Promise<readonly (readonly [number, string])[]> = tuple.fetchList()
   const subquery: NumExpression<number> = client.fn
-    .subQuery(FUNCTION_TYPE_MODEL, (q, t) => q.select(t.id).where(t.id.gt(0)))
+    .subQuery(FUNCTION_TYPE_MODEL, (q, t) => q.where(t.id.gt(0)).select(t.id))
     .distinct()
     .asValue()
     .coalesce(0)

@@ -22,8 +22,6 @@ export type {
   EnhancedMutableSubQuery,
   EnhancedMutableBaseQuery,
   QueryExtensions,
-  QueryConditions,
-  SelectedQuery,
 } from './query-enhancer'
 export type { QueryFunctions } from './query-functions'
 export type { PortableFunctions, NumericArgument } from './portable-functions'

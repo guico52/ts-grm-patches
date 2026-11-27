@@ -16,8 +16,13 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { enhanceClient, getFunctionMetadata, newSqlClient as deriveClient } from '../src/index'
 import { newSqlClient as newSqliteClient } from '../src/sqlite'
 import type { StrExpression } from '@ts-grm/core'
-import type { QueryConditions } from '../src/index'
-import type { Dialect, DialectFunctions, EnhancedSqlClient, QueryFunctions } from '../src/index'
+import type {
+  Dialect,
+  DialectFunctions,
+  EnhancedMutableRootQuery,
+  EnhancedSqlClient,
+  QueryFunctions,
+} from '../src/index'
 import type { DialectOptions } from '../src/index'
 import { driverFamily } from '../src/dialect-context'
 
@@ -359,20 +364,25 @@ describe('q.fn native API extensions', () => {
     expect(statements[0]!.text).toMatch(/group by tb_1_\.CATEGORY$/)
   })
 
-  it('delays HAVING until automatic grouping and preserves bound business values', async () => {
+  it('delays HAVING until automatic grouping finishes and preserves bound business values', async () => {
     const { client, statements } = capture()
     await client
       .createQuery(SALES, (q, t) => {
         const total = q.fn.sum(t.amount)
         return q
           .where(t.amount.gt(0))
-          .having(total.gt(10))
           .autoGroupBy()
+          .having(total.gt(10))
           .select({ category: t.category, total })
       })
       .fetchList()
     expect(statements[0]!.text).toContain('group by tb_1_.CATEGORY having sum(tb_1_.AMOUNT) > $2')
     expect(statements[0]!.values).toEqual([0, 10])
+    expect(() =>
+      client.createQuery(SALES, (q, t) =>
+        q.having(t.amount.sum().gt(10)).select({ category: t.category }),
+      ),
+    ).toThrow('"having" cannot be invoked before "groupBy"')
   })
 
   it('preserves types and fixes AVG integer decoding and MIN string operations', async () => {
@@ -660,21 +670,24 @@ describe('q.fn native API extensions', () => {
     expect(statements[0]!.text).toMatch(/group by tb_1_\.c1$/)
   })
 
-  it('allows repeated WHERE clauses after map, tuple and distinct selections', async () => {
+  it('keeps native projection objects untouched and supports native condition chaining before select', async () => {
     const { client, statements } = capture()
     await client
-      .createQuery(SALES, (q, t) =>
-        q
-          .select({ id: t.id, name: t.category })
+      .createQuery(SALES, (q, t) => {
+        const projection = q
           .where(t.amount.gt(10))
-          .where(undefined, null, t.tax.eq(2)),
-      )
+          .where(undefined, null, t.tax.eq(2))
+          .select({ id: t.id, name: t.category })
+        expect('where' in projection).toBe(false)
+        expect('autoGroupBy' in projection).toBe(false)
+        return projection
+      })
       .fetchList()
     await client
-      .createQuery(SALES, (q, t) => q.select(t.id, t.category).where(t.id.gt(0)))
+      .createQuery(SALES, (q, t) => q.where(t.id.gt(0)).select(t.id, t.category))
       .fetchList()
     await client
-      .createQuery(SALES, (q, t) => q.selectDistinct(t.category).where(t.id.gt(0)))
+      .createQuery(SALES, (q, t) => q.where(t.id.gt(0)).selectDistinct(t.category))
       .fetchList()
     expect(statements[0]!.text).toContain('where tb_1_.AMOUNT > $1 and tb_1_.TAX = $2')
     expect(statements[0]!.values).toEqual([10, 2])
@@ -682,14 +695,16 @@ describe('q.fn native API extensions', () => {
     expect(statements[2]!.text).toMatch(/^select distinct/)
   })
 
-  it('finalizes grouping using all conditions regardless of where select appears', async () => {
+  it('finalizes autoGroupBy using native where/having/orderBy and the returned projection', async () => {
     const { client, statements } = capture()
     await client
       .createQuery(SALES, (q, t) => {
         const total = q.fn.sum(t.amount)
-        const projection = q.select({ category: t.category, total })
-        q.where(t.amount.gt(0))
-        return projection.autoGroupBy().having(total.gt(10))
+        return q
+          .where(t.amount.gt(0))
+          .autoGroupBy()
+          .having(total.gt(10))
+          .select({ category: t.category, total })
       })
       .fetchList()
     expect(statements[0]!.text).toContain(
@@ -698,47 +713,47 @@ describe('q.fn native API extensions', () => {
     expect(statements[0]!.values).toEqual([0, 10])
     expect(() =>
       client.createQuery(SALES, (q, t) =>
-        q.select(t.category, q.fn.sum(t.amount)).autoGroupBy().where(q.fn.sum(t.amount).gt(0)),
+        q.where(q.fn.sum(t.amount).gt(0)).autoGroupBy().select(t.category, q.fn.sum(t.amount)),
       ),
     ).toThrow('INVALID_STAGE')
     expect(() =>
       client.createQuery(SALES, (q, t) =>
-        q.select(t.category, q.fn.sum(t.amount)).autoGroupBy().orderBy(t.tax),
+        q.autoGroupBy().orderBy(t.tax).select(t.category, q.fn.sum(t.amount)),
       ),
     ).toThrow('UNGROUPED_DEPENDENCY')
   })
 
-  it('accepts explicit grouping and deferred HAVING after select', async () => {
+  it('keeps native explicit grouping and HAVING semantics', async () => {
     const { client, statements } = capture()
     await client
       .createQuery(SALES, (q, t) => {
         const total = q.fn.sum(t.amount)
         return q
-          .select({ tax: t.tax, total })
-          .having(total.gt(2))
           .where(t.amount.gt(0))
           .groupBy(t.tax)
+          .having(total.gt(2))
+          .select({ tax: t.tax, total })
       })
       .fetchList()
     expect(statements[0]!.text).toContain('group by tb_1_.TAX having sum(tb_1_.AMOUNT) > $2')
     expect(statements[0]!.values).toEqual([0, 2])
   })
 
-  it('supports condition chains after base/subquery selections', async () => {
+  it('supports base/subquery callbacks with native chaining and autoGroupBy', async () => {
     const { client, statements } = capture()
     const base = client.fn.derivedModel(
-      client.fn.baseQuery(SALES, (q, t) => q.select({ id: t.id }).where(t.amount.gt(2))),
+      client.fn.baseQuery(SALES, (q, t) => q.where(t.amount.gt(2)).select({ id: t.id })),
     )
-    await client.createQuery(base, (q, t) => q.select(t.id).where(t.id.gt(0))).fetchList()
+    await client.createQuery(base, (q, t) => q.where(t.id.gt(0)).select(t.id)).fetchList()
     await client
       .createQuery(SALES, (q, t) =>
         q
-          .select(t.id)
           .where(
             t.id.inSubQuery(
-              q.fn.subQuery(SALES, (sq, st) => sq.select(st.id).where(st.amount.gt(5))),
+              q.fn.subQuery(SALES, (sq, st) => sq.where(st.amount.gt(5)).select(st.id)),
             ),
-          ),
+          )
+          .select(t.id),
       )
       .fetchList()
     expect(statements[0]!.values).toEqual([2, 0])
@@ -751,24 +766,21 @@ describe('q.fn native API extensions', () => {
     ).toThrow('INVALID_STAGE')
   })
 
-  it('closes query conditions on callback completion and when the callback throws', () => {
+  it('closes autoGroupBy on callback completion and when the callback throws', () => {
     const { client } = capture()
-    let saved: QueryConditions<'postgres'> | undefined
-    let predicate: ReturnType<NumExpression<number>['gt']> | undefined
+    let saved: EnhancedMutableRootQuery<'postgres'> | undefined
     client.createQuery(SALES, (q, t) => {
-      predicate = t.id.gt(0)
-      const projection = q.select(t.id)
-      saved = projection
-      return projection
+      saved = q
+      return q.select(t.id)
     })
-    expect(() => saved!.where(predicate!)).toThrow('QUERY_FINALIZED')
+    expect(() => saved!.autoGroupBy()).toThrow('QUERY_FINALIZED')
     expect(() =>
-      client.createQuery(SALES, (q, t) => {
-        saved = q.select(t.id)
+      client.createQuery(SALES, (q) => {
+        saved = q
         throw new Error('abort callback')
       }),
     ).toThrow('abort callback')
-    expect(() => saved!.where(predicate!)).toThrow('QUERY_FINALIZED')
+    expect(() => saved!.autoGroupBy()).toThrow('QUERY_FINALIZED')
     expect(() =>
       client.createQuery(SALES, (q, t) => {
         q.select(t.id)
@@ -785,7 +797,7 @@ describe('q.fn native API extensions', () => {
         const score = average.coalesce(0).plus(1).coalesce(99)
         expect(getFunctionMetadata(average)?.kind).toBe('aggregate')
         expect(getFunctionMetadata(score)?.kind).toBe('scalar')
-        return q.select({ category: t.category, score }).where(t.amount.gt(0)).autoGroupBy()
+        return q.where(t.amount.gt(0)).autoGroupBy().select({ category: t.category, score })
       })
       .fetchList()
     expect(result).toEqual([{ category: 'a', score: 2.5 }])
@@ -798,12 +810,10 @@ describe('q.fn native API extensions', () => {
     const { client, statements } = capture()
     await client
       .createQuery(SALES, (q, t) =>
-        q
-          .select({
-            label: q.fn.lower(t.category).trim().upper().concat('!').coalesce('none').rtrim(),
-            position: q.fn.upper(t.category).position('X').plus(1).coalesce(0),
-          })
-          .where(t.id.gt(0)),
+        q.where(t.id.gt(0)).select({
+          label: q.fn.lower(t.category).trim().upper().concat('!').coalesce('none').rtrim(),
+          position: q.fn.upper(t.category).position('X').plus(1).coalesce(0),
+        }),
       )
       .fetchList()
     expect(statements[0]!.text).toContain('upper(trim(lower(tb_1_.CATEGORY)))')
@@ -845,7 +855,7 @@ describe('q.fn native API extensions', () => {
     expect(statements[0]!.text).toContain('upper(trim(coalesce(min(')
     expect(() =>
       client.createQuery(SALES, (q, t) =>
-        q.select(q.fn.avg(q.fn.avg(t.amount).coalesce(0))).autoGroupBy(),
+        q.autoGroupBy().select(q.fn.avg(q.fn.avg(t.amount).coalesce(0))),
       ),
     ).toThrow('NESTED_AGGREGATE')
   })
@@ -853,12 +863,12 @@ describe('q.fn native API extensions', () => {
   it('keeps enhancement through scalar subquery cloning and asValue()', async () => {
     const { client, statements } = capture()
     const expr = client.fn
-      .subQuery(SALES, (sq, st) => sq.select(st.amount).where(st.id.gt(0)))
+      .subQuery(SALES, (sq, st) => sq.where(st.id.gt(0)).select(st.amount))
       .distinct()
       .asValue()
       .coalesce(0)
       .plus(1)
-    await client.createQuery(SALES, (q, t) => q.select(expr).where(t.id.eq(1))).fetchList()
+    await client.createQuery(SALES, (q, t) => q.where(t.id.eq(1)).select(expr)).fetchList()
     expect(statements[0]!.text).toContain('coalesce(')
     expect(statements[0]!.text).toContain('select distinct')
     const subquery = client.fn.subQuery(SALES, (sq, st) => sq.select(st.amount))
@@ -884,6 +894,7 @@ describe('q.fn native API extensions', () => {
     await client
       .createQuery(SALES, (q, t) =>
         q
+          .autoGroupBy()
           .select(
             q.fn
               .min(t.createdAt)
@@ -892,8 +903,7 @@ describe('q.fn native API extensions', () => {
               .diff(new Date('2020-01-01Z'), 'DAYS')
               .coalesce(0)
               .plus(1),
-          )
-          .autoGroupBy(),
+          ),
       )
       .fetchList()
     expect(statements[0]!.text).toContain('coalesce(')
@@ -922,7 +932,7 @@ describe('q.fn native API extensions', () => {
     expect(Object.hasOwn(value, 'plus')).toBe(false)
     await other
       .createQuery(SALES, (q, t) =>
-        q.select({ first: plus(2).abs(), second: q.fn.plus(value, 4).round() }).where(t.id.eq(1)),
+        q.where(t.id.eq(1)).select({ first: plus(2).abs(), second: q.fn.plus(value, 4).round() }),
       )
       .fetchList()
     expect(statements).toHaveLength(0)
@@ -1044,18 +1054,16 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
       )
       const values = await functionsClient
         .createQuery(SALES, (q, t) =>
-          q
-            .select({
-              abs: q.fn.abs(-1.5).round(1),
-              sign: q.fn.sign(-4),
-              round: q.fn.round(1.25, 1),
-              chars: q.fn.charLength('中文  '),
-              bytes: q.fn.octetLength('中文  '),
-              empty: q.fn.charLength(''),
-              null: q.fn.charLength(t.label),
-              nullableMath: q.fn.abs(null).round(),
-            })
-            .where(t.id.eq(1)),
+          q.where(t.id.eq(1)).select({
+            abs: q.fn.abs(-1.5).round(1),
+            sign: q.fn.sign(-4),
+            round: q.fn.round(1.25, 1),
+            chars: q.fn.charLength('中文  '),
+            bytes: q.fn.octetLength('中文  '),
+            empty: q.fn.charLength(''),
+            null: q.fn.charLength(t.label),
+            nullableMath: q.fn.abs(null).round(),
+          }),
         )
         .fetchList()
       expect(values).toEqual([
@@ -1074,24 +1082,22 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
         .createQuery(SALES, (q, t) => {
           const text = q.fn.native.str`'中ab '`
           const repeated = q.fn.native.str`'abab'`
-          return q
-            .select({
-              left: q.fn.left(text, 2),
-              right: q.fn.right(text, 2),
-              rightZero: q.fn.right(text, 0),
-              part: q.fn.substring(text, 2, 2),
-              tail: q.fn.substring(text, 2),
-              lpad: q.fn.lpad(text, 6, 'xy'),
-              rpad: q.fn.rpad(text, 6, 'xy'),
-              shortened: q.fn.lpad(text, 2, 'xy'),
-              noFill: q.fn.rpad(text, 6, ''),
-              find: q.fn.position(repeated, 'ab', 2),
-              absent: q.fn.position(repeated, 'z', 2),
-              nullPad: q.fn.lpad(t.label, 4),
-              nullRight: q.fn.right(t.label, 0),
-              nullFind: q.fn.position(t.label, 'a', 2),
-            })
-            .where(t.id.eq(1))
+          return q.where(t.id.eq(1)).select({
+            left: q.fn.left(text, 2),
+            right: q.fn.right(text, 2),
+            rightZero: q.fn.right(text, 0),
+            part: q.fn.substring(text, 2, 2),
+            tail: q.fn.substring(text, 2),
+            lpad: q.fn.lpad(text, 6, 'xy'),
+            rpad: q.fn.rpad(text, 6, 'xy'),
+            shortened: q.fn.lpad(text, 2, 'xy'),
+            noFill: q.fn.rpad(text, 6, ''),
+            find: q.fn.position(repeated, 'ab', 2),
+            absent: q.fn.position(repeated, 'z', 2),
+            nullPad: q.fn.lpad(t.label, 4),
+            nullRight: q.fn.right(t.label, 0),
+            nullFind: q.fn.position(t.label, 'a', 2),
+          })
         })
         .fetchList()
       expect(strings).toEqual([
@@ -1114,31 +1120,27 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
       ])
       const distinct = await functionsClient
         .createQuery(SALES, (q, t) =>
-          q
-            .select({
-              key: q.fn.lower(t.category).charLength().abs().round(),
-              count: q.fn.countDistinct(q.fn.lower(t.category)),
-              nullCount: q.fn.countDistinct(t.label),
-            })
-            .autoGroupBy(),
+          q.autoGroupBy().select({
+            key: q.fn.lower(t.category).charLength().abs().round(),
+            count: q.fn.countDistinct(q.fn.lower(t.category)),
+            nullCount: q.fn.countDistinct(t.label),
+          }),
         )
         .fetchList()
       expect(distinct).toEqual([{ key: 1, count: 2, nullCount: 0 }])
       if (mathEnabled) {
         const math = await functionsClient
           .createQuery(SALES, (q, t) =>
-            q
-              .select({
-                ceil: q.fn.ceil(-1.2),
-                floor: q.fn.floor(-1.2),
-                trunc: q.fn.trunc(-1.8),
-                power: q.fn.power(2, -1),
-                sqrt: q.fn.constant(9).sqrt().round(),
-                ln: q.fn.ln(q.fn.exp(1)).round(),
-                log10: q.fn.log10(100).round(),
-                aggregate: q.fn.sum(t.amount).sqrt().round(2),
-              })
-              .autoGroupBy(),
+            q.autoGroupBy().select({
+              ceil: q.fn.ceil(-1.2),
+              floor: q.fn.floor(-1.2),
+              trunc: q.fn.trunc(-1.8),
+              power: q.fn.power(2, -1),
+              sqrt: q.fn.constant(9).sqrt().round(),
+              ln: q.fn.ln(q.fn.exp(1)).round(),
+              log10: q.fn.log10(100).round(),
+              aggregate: q.fn.sum(t.amount).sqrt().round(2),
+            }),
           )
           .fetchList()
         expect(math).toEqual([
@@ -1214,10 +1216,10 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
         .createQuery(SALES, (q, t) => {
           const category = q.fn.lower(t.category).trim().upper()
           return q
-            .select({ category, score: q.fn.avg(t.amount).coalesce(0).plus(1).coalesce(99) })
             .where(t.amount.gt(1))
             .autoGroupBy()
             .orderBy(category)
+            .select({ category, score: q.fn.avg(t.amount).coalesce(0).plus(1).coalesce(99) })
         })
         .fetchList()
       expect(composed).toEqual([
@@ -1227,51 +1229,49 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
       const emptyComposed = await client
         .createQuery(SALES, (q, t) =>
           q
+            .where(t.id.lt(0))
+            .autoGroupBy()
             .select({
               score: q.fn.avg(t.amount).coalesce(7).plus(1),
-            })
-            .where(t.id.lt(0))
-            .autoGroupBy(),
+            }),
         )
         .fetchList()
       expect(emptyComposed).toEqual([{ score: 8 }])
       const nullableString = await client
         .createQuery(SALES, (q, t) =>
-          q.select(q.fn.min(t.label).coalesce('empty').concat('!').upper()).autoGroupBy(),
+          q.autoGroupBy().select(q.fn.min(t.label).coalesce('empty').concat('!').upper()),
         )
         .fetchList()
       expect(nullableString).toEqual(['EMPTY!'])
       const position = await client
         .createQuery(SALES, (q, t) =>
-          q
-            .select({
-              id: t.id,
-              position: q.fn.upper(t.category).position('A').plus(1).coalesce(0),
-            })
-            .where(t.id.eq(1)),
+          q.where(t.id.eq(1)).select({
+            id: t.id,
+            position: q.fn.upper(t.category).position('A').plus(1).coalesce(0),
+          }),
         )
         .fetchList()
       expect(position).toEqual([{ id: 1, position: 2 }])
       const subqueryRows = await client
         .createQuery(SALES, (q, t) =>
           q
-            .select(t.id)
             .where(
               t.id.inSubQuery(
-                q.fn.subQuery(SALES, (sq, st) => sq.select(st.id).where(st.amount.gt(1))),
+                q.fn.subQuery(SALES, (sq, st) => sq.where(st.amount.gt(1)).select(st.id)),
               ),
             )
-            .orderBy(t.id),
+            .orderBy(t.id)
+            .select(t.id),
         )
         .fetchList()
       expect(subqueryRows).toEqual([2, 3])
       const scalarSubquery = client.fn
-        .subQuery(SALES, (sq, st) => sq.select(sq.fn.max(st.amount)).where(st.amount.gt(1)))
+        .subQuery(SALES, (sq, st) => sq.where(st.amount.gt(1)).select(sq.fn.max(st.amount)))
         .asValue()
         .coalesce(0)
         .plus(1)
       const subqueryNested = await client
-        .createQuery(SALES, (q, t) => q.select(scalarSubquery).where(t.id.eq(1)))
+        .createQuery(SALES, (q, t) => q.where(t.id.eq(1)).select(scalarSubquery))
         .fetchList()
       expect(subqueryNested).toEqual([6])
       const manager = new FilterManager()
@@ -1281,18 +1281,18 @@ describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', ()
       const filteredRows = await filtered
         .createQuery(SALES, (q, t) =>
           q
+            .where(t.amount.gt(0))
+            .autoGroupBy()
             .select({
               tax: t.tax,
               names: q.fn.sqlite.jsonGroupArray(t.category),
               total: q.fn.sum(t.amount).coalesce(0),
-            })
-            .where(t.amount.gt(0))
-            .autoGroupBy(),
+            }),
         )
         .fetchList()
       expect(filteredRows).toEqual([{ tax: 2, names: '["B"]', total: 5 }])
       expect(
-        await client.createQuery(SALES, (q, t) => q.select(t.id).orderBy(t.id)).fetchList(),
+        await client.createQuery(SALES, (q, t) => q.orderBy(t.id).select(t.id)).fetchList(),
       ).toEqual([1, 2, 3])
     } finally {
       database.close()
@@ -1312,8 +1312,8 @@ describe('in-place native expression enhancement', () => {
         const date = t.createdAt.max().plus(1, 'DAYS')
         const predicate = t.amount.gt(0).and(t.id.eqIf(undefined)).not().not()
         return q
-          .select({ total, name, date, native: dsl.sum(t.amount).abs().round(2) })
           .where(predicate)
+          .select({ total, name, date, native: dsl.sum(t.amount).abs().round(2) })
       })
       .fetchList()
     expect(statements[0]!.text).toContain('round(cast(abs(sum(')
@@ -1388,12 +1388,10 @@ describe('in-place native expression enhancement', () => {
     const { client, statements } = capture()
     await client
       .createQuery(SALES, (q, t) =>
-        q
-          .select({
-            category: t.category,
-            count: t.id.countDistinct().plus(1),
-          })
-          .autoGroupBy(),
+        q.autoGroupBy().select({
+          category: t.category,
+          count: t.id.countDistinct().plus(1),
+        }),
       )
       .fetchList()
     expect(statements[0]!.text).toMatch(/count\(distinct /i)

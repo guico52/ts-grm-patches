@@ -53,18 +53,16 @@ describe('dialect-bound native client creation', () => {
       expect(Object.keys(client.fn).filter((key) => names.includes(key))).toEqual([family])
       client.createQuery(ITEM, (q, t) => {
         expect(q.fn).toBe(client.fn)
-        const projection = q.select(t.id)
-        expect(projection.fn).toBe(client.fn)
-        expect(Object.keys(projection.fn).filter((key) => names.includes(key))).toEqual([family])
+        expect(Object.keys(q.fn).filter((key) => names.includes(key))).toEqual([family])
         q.fn.baseQuery(ITEM, (bq, bt) => {
           expect(bq.fn).toBe(client.fn)
-          return bq.select({ id: bt.id }).where(bt.id.gt(0))
+          return bq.where(bt.id.gt(0)).select({ id: bt.id })
         })
         q.fn.subQuery(ITEM, (sq, st) => {
           expect(sq.fn).toBe(client.fn)
-          return sq.select(st.id).where(st.id.gt(0))
+          return sq.where(st.id.gt(0)).select(st.id)
         })
-        return projection.where(t.id.gt(0))
+        return q.where(t.id.gt(0)).select(t.id)
       })
     },
   )
@@ -100,9 +98,8 @@ describe('dialect-bound native client creation', () => {
     expect(Object.isFrozen(child.dialectProfile.capabilities)).toBe(true)
     expect(Reflect.set(child, 'dialect', 'mysql')).toBe(false)
     child.createQuery(ITEM, (q, t) => {
-      const projection = q.select(t.id)
-      expect('postgres' in projection.fn).toBe(true)
-      return projection
+      expect('postgres' in q.fn).toBe(true)
+      return q.select(t.id)
     })
   })
 

@@ -66,39 +66,31 @@ export function checkBoundTypes(
     const text = q.fn.postgres.jsonbExtractPathText(t.data, 'name').coalesce('none').trim()
     // @ts-expect-error Root query callbacks keep the driver's family.
     void q.fn.sqlite
-    const projection = q.select({ id: t.id, text }).where(t.id.gt(0))
-    projection.fn.postgres.jsonbExtractPathText(t.data, 'other')
-    // @ts-expect-error The selected projection must not erase the family.
-    void projection.fn.mysql
     q.fn.subQuery(MODEL, (sq, st) => {
       sq.fn.postgres.jsonbExtractPathText(st.data, 'value')
       // @ts-expect-error Nested subqueries retain the family.
       void sq.fn.oracle
-      const selected = sq.select(st.id).where(st.id.gt(0))
-      // @ts-expect-error Subquery projections retain the family.
-      void selected.fn.mysql
-      return selected
+      return sq.where(st.id.gt(0)).select(st.id)
     })
     q.fn.baseQuery(MODEL, (bq, bt) => {
       bq.fn.postgres.jsonbExtractPathText(bt.data, 'value')
-      const selected = bq.select({ id: bt.id }).where(bt.id.gt(0))
-      // @ts-expect-error BaseQuery projections retain the family.
-      void selected.fn.sqlserver
-      selected.fn.subQuery(MODEL, (sq, st) => {
+      // @ts-expect-error BaseQuery callbacks retain the family.
+      void bq.fn.sqlserver
+      bq.fn.subQuery(MODEL, (sq, st) => {
         // @ts-expect-error Deeper scopes also retain the family.
         void sq.fn.mysql
         return sq.select(st.id)
       })
-      return selected
+      return bq.where(bt.id.gt(0)).select({ id: bt.id })
     })
-    return projection
+    return q.where(t.id.gt(0)).select({ id: t.id, text })
   })
   myClient(mysql).fn.mysql.jsonExtract('{}', '$')
   liteClient(sqlite).fn.sqlite.jsonType('{}')
   msClient(sqlserver2012).fn.sqlserver.isJson('{}')
   oraClient(oracle12).fn.oracle.toChar(new Date(), 'YYYY')
   const rows: Promise<Array<{ readonly id: number }>> = derived
-    .createQuery(MODEL, (q, t) => q.select({ id: t.id }).where(t.id.gt(0)))
+    .createQuery(MODEL, (q, t) => q.where(t.id.gt(0)).select({ id: t.id }))
     .fetchList()
   void [inferred, my, lite, ms, ms2012, ora, ora12, derivedAgain, idempotent, checked, rows]
 }

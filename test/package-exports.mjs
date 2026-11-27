@@ -52,7 +52,7 @@ for (const [mode, load] of [
     assert.equal(entry.enhanceClient(derived), derived)
     const chain = expr.coalesce('fallback').upper()
     await derived
-      .createQuery(Model, (q, t) => q.select({ id: t.id, value: chain }).where(t.id.gt(0)))
+      .createQuery(Model, (q, t) => q.where(t.id.gt(0)).select({ id: t.id, value: chain }))
       .fetchList()
     assert.equal(statements.length, 1)
     assert.match(statements[0], /upper\(coalesce\(/)

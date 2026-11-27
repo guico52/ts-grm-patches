@@ -47,17 +47,17 @@ export function checkNativeCompatibility(client: EnhancedSqlClient<'postgres'>, 
     const original: MutableRootQuery = q
     const select: MutableRootQuery['select'] = q.select
     void [original, select]
-    return q.where(t.id.gt(0)).select(t.fetch(VIEW)).where(t.id.lt(10))
+    return q.where(t.id.gt(0), t.id.lt(10)).select(t.fetch(VIEW))
   })
   client.fn.subQuery(MODEL, (q, t) => {
     const original: MutableSubQuery = q
     void original
-    return q.select(t.id).where(t.id.gt(0))
+    return q.where(t.id.gt(0)).select(t.id)
   })
   client.fn.baseQuery(MODEL, (q, t) => {
     const original: MutableBaseQuery = q
     void original
-    return q.select({ id: t.id }).where(t.id.gt(0))
+    return q.where(t.id.gt(0)).select({ id: t.id })
   })
   const derived: EnhancedSqlClient = newSqlClient(raw)
   const recursive = client.fn
@@ -87,7 +87,7 @@ export function checkNativeCompatibility(client: EnhancedSqlClient<'postgres'>, 
       q.fn.postgres.jsonbExtractPathText('{}', 'name')
       // @ts-expect-error Multiple-model callbacks still retain the bound family.
       void q.fn.mysql
-      return q.where(left.id.eq(right.id)).select(left.id, right.name).where(left.id.gt(0))
+      return q.where(left.id.eq(right.id), left.id.gt(0)).select(left.id, right.name)
     })
     .fetchList()
   // @ts-expect-error Native SqlClient erases the specific driver's family.

@@ -15,21 +15,17 @@ import type {
   MutableSubQuery,
   ExpressionLike,
   ExpressionOrder,
+  NumExpression,
   Predicate,
   RootQueryProjection,
-  RootQuerySelectArrArgs,
-  RootQuerySelectMapArgs,
-  SelectionLike,
   SqlClient,
   SubQueryProjection,
-  SubQuerySelectArrArgs,
   Table,
 } from '@ts-grm/core'
 
 import { inferGroupBy, QuerySemanticError, validateFunctionDialects } from './function-semantics'
 import { createQueryFunctions } from './query-functions'
 import type { QueryFunctions } from './query-functions'
-import type { NumExpression } from '@ts-grm/core'
 import { createDialectProfile, resolveDriverFamily } from './dialect-context'
 import type { Dialect, DialectOptions, DialectProfile } from './dialect-context'
 import type { newSqlClient as nativeNewSqlClient } from '@ts-grm/sql'
@@ -40,66 +36,28 @@ type SubTables<M extends readonly Model[]> = { [K in keyof M]: Table<M[K], 'ARBI
 
 export interface QueryExtensions<D extends Dialect = Dialect> {
   readonly fn: QueryFunctions<D>
-  /** Infer keys when the query callback completes. */
+  /** Infer GROUP BY keys from the returned projection when the query callback completes. */
   autoGroupBy(): this
 }
-export interface QueryConditions<D extends Dialect = Dialect> extends QueryExtensions<D> {
-  where(...predicates: readonly (Predicate | null | undefined)[]): this
-  having(...predicates: readonly (Predicate | null | undefined)[]): this
-  orderBy(...orders: readonly (ExpressionLike | ExpressionOrder)[]): this
-  groupBy(...expressions: readonly ExpressionLike[]): this
-}
-/** The native projection with conditions bound to its owning query callback. */
-export type SelectedQuery<P, D extends Dialect = Dialect> = P & QueryConditions<D>
-interface RootSelect<D extends Dialect> {
-  <T extends SelectionLike>(selection: T): SelectedQuery<RootQueryProjection<T, 'ONE'>, D>
-  <const T extends RootQuerySelectArrArgs>(
-    ...selections: T
-  ): SelectedQuery<RootQueryProjection<T, 'ARRAY'>, D>
-  <const T extends RootQuerySelectMapArgs>(
-    selections: T,
-  ): SelectedQuery<RootQueryProjection<T, 'MAP'>, D>
-}
-interface SubSelect<D extends Dialect> {
-  <const T extends SubQuerySelectArrArgs>(
-    ...expressions: T
-  ): SelectedQuery<SubQueryProjection<T, 'TUPLE'>, D>
-  <T extends ExpressionLike>(expression: T): SelectedQuery<SubQueryProjection<T, 'EXPRESSION'>, D>
-}
-interface BaseSelect<D extends Dialect> {
-  <const T extends BaseQuerySelectMapArgs>(selection: T): SelectedQuery<BaseQueryProjection<T>, D>
-}
 export interface EnhancedMutableRootQuery<D extends Dialect = Dialect>
-  extends MutableRootQuery, QueryExtensions<D> {
-  select: RootSelect<D> & MutableRootQuery['select']
-  selectDistinct: RootSelect<D> & MutableRootQuery['selectDistinct']
-}
+  extends MutableRootQuery, QueryExtensions<D> {}
 export interface EnhancedMutableSubQuery<D extends Dialect = Dialect>
-  extends MutableSubQuery, QueryExtensions<D> {
-  select: SubSelect<D> & MutableSubQuery['select']
-  selectDistinct: SubSelect<D> & MutableSubQuery['selectDistinct']
-}
+  extends MutableSubQuery, QueryExtensions<D> {}
 export interface EnhancedMutableBaseQuery<D extends Dialect = Dialect>
-  extends MutableBaseQuery, QueryExtensions<D> {
-  select: BaseSelect<D> & MutableBaseQuery['select']
-  selectDistinct: BaseSelect<D> & MutableBaseQuery['selectDistinct']
-}
+  extends MutableBaseQuery, QueryExtensions<D> {}
 type NativeQueryCreator = SqlClient['createQuery']
 type NativeBaseCreator = typeof dsl.baseQuery
 type NativeSubCreator = typeof dsl.subQuery
-type RootResult<P> =
-  P extends RootQueryProjection<infer T, infer K> ? RootQueryProjection<T, K> : never
-type BaseResult<P> = P extends BaseQueryProjection<infer T> ? BaseQueryProjection<T> : never
 
 export interface EnhancedQueryCreator<D extends Dialect = Dialect> extends NativeQueryCreator {
   <const M extends AtLeastOne<Model>, P extends RootQueryProjection<unknown>>(
     ...args: [...models: M, fn: (q: EnhancedMutableRootQuery<D>, ...tables: Tables<M>) => P]
-  ): AtomRootQuery<RootResult<P>>
+  ): AtomRootQuery<P>
 }
 export interface EnhancedBaseQueryCreator<D extends Dialect = Dialect> extends NativeBaseCreator {
   <const M extends AtLeastOne<Model>, P extends BaseQueryProjection<BaseQuerySelectMapArgs>>(
     ...args: [...models: M, fn: (q: EnhancedMutableBaseQuery<D>, ...tables: Tables<M>) => P]
-  ): AtomBaseQuery<BaseResult<P>>
+  ): AtomBaseQuery<P>
 }
 export interface EnhancedSubQueryCreator<D extends Dialect = Dialect> extends NativeSubCreator {
   <const M extends AtLeastOne<Model>, P extends SubQueryProjection<unknown> | void>(
@@ -118,6 +76,12 @@ export interface EnhancedSqlClient<D extends Dialect = Dialect> extends SqlClien
 }
 
 type MutableQuery = MutableRootQuery | MutableBaseQuery | MutableSubQuery
+type NativeMutableQueryState = {
+  readonly wherePred?: Predicate
+  readonly orders?: readonly ExpressionOrder[]
+  readonly groupByExprs?: readonly ExpressionLike[]
+  readonly havingPred?: Predicate
+}
 type Call = (...args: unknown[]) => unknown
 
 function selectionsOf(projection: unknown): readonly unknown[] {
@@ -134,34 +98,21 @@ function enhanceQuery(q: MutableQuery, fn: QueryFunctions, profile: DialectProfi
   if ('fn' in q || 'autoGroupBy' in q)
     throw new QuerySemanticError('API_COLLISION', 'Query already defines fn/autoGroupBy')
   let automatic = false
-  let explicitGroup = false
   let closed = false
-  const projections = new WeakSet<object>()
-  const rowPredicates: unknown[] = []
-  const having: unknown[] = []
-  const orders: unknown[] = []
-  const originals = {
-    select: q.select,
-    selectDistinct: q.selectDistinct,
-    groupBy: q.groupBy,
-    having: q.having,
-    where: q.where,
-    orderBy: q.orderBy,
-  } as unknown as Record<string, Call>
-  const apply = (name: string, args: readonly unknown[]) => Reflect.apply(originals[name]!, q, args)
+  const bufferedHaving: unknown[] = []
+  const originalGroupBy = q.groupBy as unknown as Call
+  const originalHaving = q.having as unknown as Call
+  const state = q as unknown as NativeMutableQueryState
   const assertOpen = () => {
     if (closed)
       throw new QuerySemanticError('QUERY_FINALIZED', 'The query callback has already completed')
-  }
-  const assertMutableOpen = () => {
-    if (automatic) assertOpen()
   }
   Object.defineProperties(q, {
     fn: { value: fn },
     autoGroupBy: {
       value() {
         assertOpen()
-        if (automatic || explicitGroup)
+        if (automatic || state.groupByExprs !== undefined)
           throw new QuerySemanticError(
             'GROUP_BY_CONFLICT',
             'Choose groupBy() or autoGroupBy() once',
@@ -170,98 +121,65 @@ function enhanceQuery(q: MutableQuery, fn: QueryFunctions, profile: DialectProfi
         return q
       },
     },
-  })
-  Object.defineProperty(q, 'groupBy', {
-    value(...args: unknown[]) {
-      assertMutableOpen()
-      validateFunctionDialects(args, dialect, profile)
-      if (automatic)
-        throw new QuerySemanticError(
-          'GROUP_BY_CONFLICT',
-          'groupBy() and autoGroupBy() are mutually exclusive',
-        )
-      const result = apply('groupBy', args)
-      explicitGroup = true
-      return result
-    },
-  })
-  for (const [name, recorded] of [
-    ['where', rowPredicates],
-    ['orderBy', orders],
-  ] as const) {
-    Object.defineProperty(q, name, {
+    groupBy: {
       value(...args: unknown[]) {
-        assertMutableOpen()
-        validateFunctionDialects(args, dialect, profile)
-        if (!closed) recorded.push(...args.filter((value) => value !== null && value !== undefined))
-        return apply(name, args)
-      },
-    })
-  }
-  Object.defineProperty(q, 'having', {
-    value(...args: unknown[]) {
-      assertMutableOpen()
-      validateFunctionDialects(args, dialect, profile)
-      if (closed) return apply('having', args)
-      having.push(...args.filter((value) => value !== null && value !== undefined))
-      return q
-    },
-  })
-  for (const name of ['select', 'selectDistinct']) {
-    Object.defineProperty(q, name, {
-      value(...args: unknown[]) {
-        assertMutableOpen()
-        const projection = apply(name, args) as object
-        projections.add(projection)
-        Object.defineProperty(projection, 'fn', { value: fn })
-        for (const method of ['where', 'having', 'orderBy', 'groupBy', 'autoGroupBy']) {
-          Object.defineProperty(projection, method, {
-            value(...values: unknown[]) {
-              assertOpen()
-              Reflect.apply(Reflect.get(q, method) as Call, q, values)
-              return projection
-            },
-          })
+        if (automatic) {
+          assertOpen()
+          throw new QuerySemanticError(
+            'GROUP_BY_CONFLICT',
+            'groupBy() and autoGroupBy() are mutually exclusive',
+          )
         }
-        return projection
+        return Reflect.apply(originalGroupBy, q, args)
       },
-    })
-  }
+    },
+    having: {
+      value(...args: unknown[]) {
+        if (automatic) {
+          assertOpen()
+          bufferedHaving.push(...args.filter((value) => value !== null && value !== undefined))
+          return q
+        }
+        return Reflect.apply(originalHaving, q, args)
+      },
+    },
+  })
   return {
     finish(returned: unknown) {
       assertOpen()
-      if (
-        automatic &&
-        returned !== undefined &&
-        (typeof returned !== 'object' || returned === null || !projections.has(returned))
-      ) {
-        throw new QuerySemanticError(
-          'PROJECTION_MISMATCH',
-          'Return the selected projection from its owning query callback',
-        )
-      }
       const selections = returned === undefined ? implicitSelection : selectionsOf(returned)
+      const rowPredicates = state.wherePred === undefined ? [] : [state.wherePred]
+      const orders = state.orders ?? []
+      const explicitGroups = state.groupByExprs ?? []
+      const nativeHaving = state.havingPred === undefined ? [] : [state.havingPred]
       validateFunctionDialects(
-        [...selections, ...rowPredicates, ...having, ...orders],
+        [
+          ...selections,
+          ...rowPredicates,
+          ...explicitGroups,
+          ...nativeHaving,
+          ...bufferedHaving,
+          ...orders,
+        ],
         dialect,
         profile,
       )
-      if (automatic && having.length > 0 && orders.length > 0) {
-        throw new QuerySemanticError(
-          'HAVING_ORDER_REQUIRES_STAGE',
-          'Upstream renders ORDER BY before HAVING; put ordering on an outer derived query',
-        )
-      }
       if (automatic) {
-        const keys = inferGroupBy(selections, rowPredicates, having, orders, dialect)
-        if (keys.length > 0) apply('groupBy', keys)
-        else if (having.length > 0)
+        if (bufferedHaving.length > 0 && orders.length > 0) {
+          throw new QuerySemanticError(
+            'HAVING_ORDER_REQUIRES_STAGE',
+            'Upstream renders ORDER BY before HAVING; put ordering on an outer derived query',
+          )
+        }
+        const keys = inferGroupBy(selections, rowPredicates, bufferedHaving, orders, dialect)
+        if (keys.length > 0) Reflect.apply(originalGroupBy, q, keys)
+        else if (bufferedHaving.length > 0)
           throw new QuerySemanticError(
             'GLOBAL_HAVING_REQUIRES_STAGE',
             'Use a baseQuery aggregate and an outer WHERE for global HAVING',
           )
+        if (bufferedHaving.length > 0) Reflect.apply(originalHaving, q, bufferedHaving)
       }
-      if (having.length > 0) apply('having', having)
     },
     close() {
       closed = true
