@@ -6,7 +6,59 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.3.1]
+## [0.4.0] - 2026-11-27
+
+### Changed
+
+- Merge fluent methods into native core interfaces; remove public Chained*Expression
+  types and per-instance expression method interception.
+- Install new methods once on SPI prototypes via applyPatches or client enhancement.
+  Field chains, native DSL results and q.fn share expression implementations.
+- Keep native string AST nodes; repair missing or incorrect dialect rendering in
+  Driver NodeRender, buffering unsupported upstream rendering before fallback.
+- Resolve portable-function dialects at render time from the current client;
+  preserve function/aggregate semantics for analysis and validate capabilities at
+  enhanced-query completion, with render-time checks as a fallback.
+- Preserve native SqlClient/query signatures, multiple projection construction and
+  raw-client derivation while retaining default select().where() support.
+
+- Separate portable argument/capability validation from SQL lowering; reuse
+  rendering adapters by immutable dialect profile instead of rebuilding factories
+  during construction and query validation.
+
+### Added
+
+- Support `@ts-grm/core` and `@ts-grm/sql` `>=0.0.13 <0.0.15` (verified against `0.0.14`,
+  where upstream fixed runtime `BOOL` queries and nullable `BOOL` `NULL` decoding; runtime
+  `TEXT` queries and `BOOL` type distribution remain handled by this package).
+- Native/field/facade expression performance benchmarks separating query building,
+  synchronous fragment generation and fetchList pipelines, with same-machine old
+  implementation comparisons and recorded source hashes.
+
+### Fixed
+
+- Unify concat validation across field and q.fn entry points, preserve identity
+  for field concat() without operands, and validate all string index/length
+  literals during enhanced-query validation and native rendering.
+
+- Preserve string/date/EnumSet MIN/MAX chaining and floating-point AVG decoding
+  through chain/q.fn entry points; repair native position numeric methods/decoding
+  and the 0.0.13 coalesce variadic runtime mismatch on prototypes.
+
+### Migration notes
+
+- Use native NumExpression/StrExpression/DateExpression types. Prototype methods
+  affect the loaded core copy after explicit installation; extracted methods need
+  their native receiver. Raw dsl.min/max string/date chaining and raw dsl.avg
+  integer decoding retain upstream limitations. fetchCount/fetchPage aggregate
+  recognition is not repaired by this change.
+
+## [0.3.1] (Unpublished / YANKED)
+
+> **YANKED**: `0.3.1` has been unpublished from npm. Its per-instance expression
+> wrapping diverged sharply from native `ts-grm` APIs and incurred heavy runtime
+> overhead; the author considers that design a failed attempt. Do not use `0.3.1`
+> — upgrade directly to **`0.4.0`**.
 
 ### Added
 
@@ -132,7 +184,8 @@ All notable changes to this project are documented here. The format follows
 - Forward-compatible support for upstream `IDENTITY` ID generation (not present in
   `@ts-grm/core` 0.0.13).
 
-[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/eb7c62c...HEAD
+[Unreleased]: https://github.com/guico52/ts-grm-patches/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/guico52/ts-grm-patches/compare/eb7c62c...v0.4.0
 [0.3.1]: https://github.com/guico52/ts-grm-patches/compare/v0.2.2...eb7c62c
 [0.2.2]: https://github.com/guico52/ts-grm-patches/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/guico52/ts-grm-patches/compare/v0.2.0...v0.2.1

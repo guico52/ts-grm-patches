@@ -6,12 +6,12 @@ ts-grm 提供模型、AST、参数绑定、SQL 渲染、执行器、连接池与
 
 ## 版本与获取方式
 
-当前支持 Node.js >=20，以及 @ts-grm/core、@ts-grm/sql 的 >=0.0.13 <0.0.14 范围。
+当前支持 Node.js >=20，以及 @ts-grm/core、@ts-grm/sql 的 >=0.0.13 <0.0.15 范围（已实测验证 0.0.13 与 0.0.14）。
 
-本指南介绍的查询增强功能已随 **0.3.1** 发布，详见 [CHANGELOG](../../CHANGELOG.md#031)。在应用中安装发布包及匹配的原生依赖：
+当前发布版本为 **`0.4.0`**，详见 [CHANGELOG](../../CHANGELOG.md#040---2026-11-27)。旧版 `0.3.1` 因逐实例包装与原生 API 割裂严重且性能损耗大，已被作者从 npm 撤回，请直接安装 **`0.4.0`** 及匹配的原生依赖：
 
 ```bash
-pnpm add ts-grm-patches@0.3.1 @ts-grm/core@0.0.13 @ts-grm/sql@0.0.13
+pnpm add ts-grm-patches@0.4.0 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
 ```
 
 需要从源码开发或调试时，也可以构建本地仓库：
@@ -37,7 +37,7 @@ pnpm add ../ts-grm-patches @ts-grm/core@0.0.13 @ts-grm/sql@0.0.13
 | 自增/默认值修饰符、BOOL/TEXT 查询修复 | applyPatches                              | 模型模块执行前          |
 | 按集合/列注册全局过滤器               | createGlobalFilterManager                 | client 创建前注册过滤器 |
 
-仅需要查询增强时，创建/增强 client 即可。applyPatches 是单独的元数据与查询属性安装器；仅导入包不会自动执行它。过滤器的注册也可以独立用于原生 client。
+仅需要查询增强时，创建/增强 client 即可。applyPatches 同时安装元数据、查询属性及共享表达式原型/字符串渲染增强；仅导入包不会自动执行它。过滤器的注册也可以独立用于原生 client。
 
 ## 创建时绑定数据库
 
@@ -94,7 +94,7 @@ const rows = await db
 
 SQL 先按 where 过滤行，对完整的 trim(lower(category)) 表达式分组，聚合输入 amount 不会成为分组键。SQL 函数可继续嵌套；sum 的外层 abs/round/coalesce 不会丢失内部聚合依赖。
 
-select/selectDistinct 后的条件链只在所属同步回调中使用。每个回调选择一次并返回该投影；回调结束后构建关闭，fetchList 等原生根查询操作继续由 ts-grm 负责。
+select/selectDistinct 后的条件链只在所属同步回调中使用。回调可构造多个投影并返回最终选用的原生投影；回调结束后附加链式入口关闭，fetchList 等原生根查询操作继续由 ts-grm 负责。
 
 ## 函数范围与自动分组边界
 
@@ -108,7 +108,7 @@ select/selectDistinct 后的条件链只在所属同步回调中使用。每个�
 
 ## 原有元数据和过滤器
 
-列修饰符和 BOOL/TEXT 支持仍由 applyPatches 安装。在 ESM 中，将安装放在独立模块并早于模型模块导入：
+列修饰符、BOOL/TEXT 支持及原生表达式链式方法由 `applyPatches()` 一次性安装（幂等）。在 ESM 中，将安装放在独立模块并早于模型模块导入：
 
 ```ts
 // infra/patches.ts
@@ -121,6 +121,12 @@ applyPatches()
 import './infra/patches'
 import './models'
 ```
+
+在标准单包项目中，只需这样在入口执行一次：
+
+- **运行时**：整个进程内所有后续加载的模型、查询与表达式都会生效；若使用 Vitest/Jest 等按文件隔离 worker 的测试框架，把 `./infra/patches` 配置进 `setupFiles` 即可，无需在每个测试文件中重复调用。
+- **IDE 与类型检查**：只要 `infra/patches.ts` 位于 `tsconfig.json` 的 `include` 范围内，TypeScript 会加载本包对 `@ts-grm/core` 的全局模块增强，项目内其他模型与查询文件无需再次导入 `ts-grm-patches` 即可获得 `autoIncrement()`、`default()` 以及原生表达式链式方法的类型补全。
+- **Monorepo 子包或独立 `tsconfig`**：若某个独立子包（如 `packages/models`）或 `tsconfig.test.json` 的编译范围未包含 `infra/patches.ts`，在该子包下增加一个仅用于类型加载的声明文件（例如 `src/ts-grm.d.ts`，写入一行 `import 'ts-grm-patches'`）即可让 IDE 和 `tsc` 识别所有类型增强，且不产生运行时代码。
 
 安装器保留 autoIncrement/default 元数据；迁移引擎负责消费和渲染。createGlobalFilterManager 则返回原生 FilterManager，按模型集合或匹配列注册过滤器。详见[元数据](./README.md#列元数据与迁移集成)与[全局过滤器](./README.md#全局过滤器)。
 

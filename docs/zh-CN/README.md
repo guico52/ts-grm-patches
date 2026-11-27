@@ -23,11 +23,11 @@
 ## 依赖与发布状态
 
 - Node.js **>=20**。
-- 宿主项目提供 `@ts-grm/core` 和 `@ts-grm/sql`，支持范围为 **`>=0.0.13 <0.0.14`**；本包不打包上游实现。
-- 本文介绍的增强能力已在 **0.3.1** 发布，详见[版本记录](../../CHANGELOG.md#031)。
+- 宿主项目提供 `@ts-grm/core` 和 `@ts-grm/sql`，支持范围为 **`>=0.0.13 <0.0.15`**（已实测验证 `0.0.13` 与 `0.0.14`）；本包不打包上游实现。
+- 当前发布版本为 **`0.4.0`**，详见[版本记录](../../CHANGELOG.md#040---2026-11-27)。`0.3.1` 因逐实例包装与原生 API 割裂严重且性能损耗大，已被作者判定为失败设计并从 npm 撤回，请直接使用 **`0.4.0`**。
 
 ```bash
-pnpm add ts-grm-patches@0.3.1 @ts-grm/core@0.0.13 @ts-grm/sql@0.0.13
+pnpm add ts-grm-patches@0.4.0 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
 ```
 
 查询增强通过创建或增强 client 启用。列修饰符和 BOOL/TEXT 修复由 `applyPatches()` 单独安装，并须早于模型定义。仅导入包不会自动安装这些运行时补丁。全局过滤器也可以独立交给原生 client 使用。
@@ -201,9 +201,14 @@ const client = newSqlClient(new PostgresDriver(pool), {
 
 ## 布尔与文本列参与查询
 
-`@ts-grm/core` 0.0.13 的 `createTableProp` 只为数值、`STR`、`DATETIME` 列建立属性表达式，
+`@ts-grm/core` `0.0.13` 的 `createTableProp` 只为数值、`STR`、`DATETIME` 列建立属性表达式，
 `prop.bool()` / `prop.text()` 列一旦用在 `where` / `orderBy` / `select` 里，就会抛出
 `ArgumentError: Cannot create table prop … whose scalar type is BOOL/TEXT`。
+
+在 **`0.0.14`** 中，上游已修复 **`BOOL` 运行时查询**（`createTableProp` 新增 `case "BOOL"`）以及
+**可空布尔列读取 `NULL` 返回 `true`** 的问题，本包的运行时 getter 在 `0.0.14` 上会对 `BOOL` 自动让位；
+但 **`TEXT` 运行时查询**（`createTableProp` 仍缺 `case "TEXT"`）与 **`BOOL` 类型侧的 `boolean` 分配问题**
+在 `0.0.14` 中仍未修复，仍需使用 `applyPatches()` 与 `bool()` / `nullableBool()`。
 
 `applyPatches()` 包装 `spi.Entity.prototype.tableClass`，为这两类列补上属性表达式
 （`BOOL` → 可比较表达式，`TEXT` → 完整的字符串表达式，支持 `like` / `lower()` 等）。
@@ -240,11 +245,10 @@ client.createQuery(ARTICLE, (q, a) =>
 可空列请用 `nullableBool()`：上游的 `nullable()` 会丢掉这个标记。
 
 > [!WARNING]
-> **上游问题：读取可空布尔列中的 `NULL` 会得到 `true`。**
-> `@ts-grm/sql` 0.0.13 在判断 `NULL` 之前就转换了 `BOOL` 值，因此可空布尔列中存储的 `NULL`
-> 会被读成 `true`，且不报错。问题出在上游内部的行读取器，本包无法触及；无论是否使用本包，
-> `prop.bool().nullable()` 都会受影响。过滤不受影响（`where(a.pinned.isNull())` 正常），
-> 只有读回值时出错。在上游修复之前，建议使用带默认值的非空布尔列，例如 `bool().default(false)`。
+> **上游 0.0.13 问题（已在 0.0.14 修复）：读取可空布尔列中的 `NULL` 会得到 `true`。**
+> `@ts-grm/sql` `0.0.13` 在判断 `NULL` 之前就转换了 `BOOL` 值，因此可空布尔列中存储的 `NULL`
+> 会被读成 `true`，且不报错。上游已在 `@ts-grm/sql` **`0.0.14`** 修复此问题（`DataRowReader` 已增加
+> `value != null` 判断）。若仍停留在 `0.0.13`，建议使用带默认值的非空布尔列，例如 `bool().default(false)`。
 
 ## 数据流
 
@@ -256,13 +260,25 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
     → ColumnDef.prop                // schema_creator 持有该 EntityProp
 ```
 
-`applyPatches()` 做三件事：
+`applyPatches()` 还会安装原生表达式方法和字符串渲染修复；原有元数据步骤为：
 
 1. 给 `__ScalarProp` 安装 `autoIncrement()` / `default(value)`
 2. 给 `spi.EntityProp` 安装 `autoIncrement` / `default` 只读读取器
 3. 包装 `spi.Entity.prototype.tableClass`，让 `BOOL` / `TEXT` 列可以参与查询
 
 若上游将来原生提供同名成员，或开始支持这两类列参与查询，补丁会自动让位（不覆盖）。
+
+## 原位链式增强
+
+`0.4.0` 将新增方法声明合并到 core 原生接口，并一次性安装到 SPI 原型。字段、原生 DSL 结果与 q.fn 共享同一套表达式：
+
+```ts
+t.amount.times(t.qty).sum().abs().round(2).coalesce(0)
+dsl.sum(t.amount).abs().round(2)
+t.name.min().trim()
+```
+
+applyPatches 或创建/增强 client 会安装共享方法；原生字符串 AST 保留，方言补齐在 NodeRender 执行。新增中立函数节点在渲染时确定方言。增强 client 继续支持默认 select().where()，同时兼容原生 SqlClient。限制与迁移见[查询函数](./query-functions.md)。
 
 ## API
 
@@ -271,7 +287,7 @@ prop.i32().autoIncrement()          // 新增字段写入 __PropData
 - `client.fn` / `q.fn` —— `QueryFunctions`，提供通用函数、语义标记、增强子查询/BaseQuery 与匹配的专有命名空间。
 - 增强的 select/selectDistinct 投影支持 where、having、orderBy、groupBy、autoGroupBy，使用范围截止于所属查询回调结束。
 - `getFunctionMetadata(expression)` / `QuerySemanticError` —— 函数元数据读取与显式构建期语义错误。
-- `EnhancedSqlClient`、`Chained*Expression`、`DialectProfile`、`DialectOptions` —— client、表达式与能力声明的公开类型。
+- `EnhancedSqlClient`、`DialectProfile`、`DialectOptions` —— client、表达式与能力声明的公开类型。
 - `applyPatches(): void` —— 安装补丁。幂等；必须在任何 `model(...)` 定义之前调用。
 - `isColumnDefaultExpression(value: unknown): value is ColumnDefaultExpression` ——
   默认值是 SQL 表达式节点而非字面量时返回 `true`。
@@ -307,9 +323,11 @@ if (isColumnDefaultExpression(d)) {
 
 - 必须在定义任何 `model(...)` **之前**调用 `applyPatches()`。ES 模块的 `import` 先于本模块的
   函数体求值，若 `main.ts` 同时导入了模型模块，在其顶部调用就已经晚了。请把调用放进一个单独的
-  模块，并最先导入它。
-- 类型增强（prop 上的 `autoIncrement()` / `default()`）只要加载了本包的类型就可见，
-  即使只是 `import type`；运行时方法则只在调用 `applyPatches()` 之后才存在。
+  模块（例如 `src/patches.ts`），并在入口首行导入它；测试框架按文件隔离 worker 时，可将其配进 `setupFiles`。
+- 类型增强（`prop` 上的 `autoIncrement()` / `default()` 以及原生表达式上的链式方法）只要所在
+  `tsconfig.json` 涵盖的任意文件加载了本包类型即全局可见（单包项目只需入口 `src/patches.ts` 导入一次，
+  其他文件无需重复导入）；若 Monorepo 独立子包或独立 `tsconfig` 未包含该入口，可在子包内添加仅含
+  `import 'ts-grm-patches'` 的 `.d.ts` 文件。运行时方法仍需在调用 `applyPatches()`（或创建/增强 client）后才存在。
 - 元数据/BOOL/TEXT 安装器作用于 `@ts-grm/core` 的类原型；若同一进程加载了 ESM 与 CJS 两份上游副本，
   补丁只作用于其中一份。上面的表达式判别函数已避开这个坑。
 - 布尔 / 文本查询补丁只覆盖实体上直接声明的标量属性；嵌入字段内的属性与中间（关联）实体上的

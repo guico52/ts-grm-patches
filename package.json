@@ -1,6 +1,6 @@
 {
   "name": "ts-grm-patches",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Optional enhancements for ts-grm: dialect-bound clients, fluent query functions, automatic grouping, filters and schema metadata",
   "keywords": [
     "ts-grm",
@@ -111,8 +111,9 @@
     "clean": "rm -rf dist coverage",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:exports": "tsup && node test/package-exports.mjs",
+    "test:exports": "tsup && node test/package-exports.mjs && node test/package-types.mjs",
     "bench:query": "tsup && node bench/query-performance.mjs",
+    "bench:expressions": "tsup && node bench/expression-performance.mjs",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",
     "lint": "eslint .",
@@ -121,8 +122,8 @@
     "format:check": "prettier --check ."
   },
   "peerDependencies": {
-    "@ts-grm/core": ">=0.0.13 <0.0.14",
-    "@ts-grm/sql": ">=0.0.13 <0.0.14"
+    "@ts-grm/core": ">=0.0.13 <0.0.15",
+    "@ts-grm/sql": ">=0.0.13 <0.0.15"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

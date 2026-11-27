@@ -53,13 +53,13 @@ db.fn.mysql.jsonExtract('{}', '$')
 
 ## 派生 client
 
-使用本包工厂接收已绑定 client，会创建一个新的原生 client 并继承绑定：
+使用本包工厂接收原生 SqlClient 或已绑定 client，会创建一个新的原生 client；已绑定时继承方言声明，未绑定时读取其实际 driver，源 client 不被增强：
 
 ```ts
 const child = newSqlClient(db, { defaultBatchSize: 64 })
 ```
 
-child 保留 db 的数据库类别、同一个 driver/连接池，以及原生工厂应继承的 EntityManager、FilterManager、命名策略和其他配置。child 获得独立函数上下文；修改派生配置不影响父 client。方言专有入口只接受匹配的 driver 或匹配的已绑定 client。
+child 保留 db 的数据库类别、同一个 driver/连接池，以及原生工厂应继承的 EntityManager、FilterManager、命名策略和其他配置。child 获得独立函数上下文；修改派生配置不影响父 client。方言专有入口接收匹配的 driver 或 client；已知类型不匹配时编译拒绝，擦除类型的原生 client 在运行时检查。增强后的 client 可传入要求原生 SqlClient 的现有 helper。
 
 直接调用 @ts-grm/sql 的原生 newSqlClient 派生，仍只会创建未经增强的 SqlClient。要保留增强和方言类型，应使用本包工厂；本包不会修改上游的全局工厂。
 

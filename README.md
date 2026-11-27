@@ -28,16 +28,36 @@ Start with the [enhancement guide](docs/zh-CN/enhancement-guide.md), then choose
 features your application needs. The column metadata is consumed by tools such as
 ts-grm-migrate, which remain responsible for generating the corresponding DDL.
 
+## Native expression enhancement
+
+`0.4.0` merges fluent methods into native core interfaces and installs them on SPI prototypes. Fields, native DSL results and `q.fn` share native expressions:
+
+```ts
+t.amount.times(t.qty).sum().abs().round(2).coalesce(0)
+dsl.sum(t.amount).abs().round(2)
+t.name.min().trim()
+```
+
+`applyPatches()`, `enhanceClient()` and enhanced `newSqlClient()` install methods
+on the loaded core expression prototypes and repairs on all five Driver renderer
+prototypes. These installations also affect native clients using the same module
+copy; callback/query extensions remain attached to the selected client.
+Existing string operations retain their native AST; Driver renderers supply missing
+dialect behavior. New portable function nodes resolve the dialect at rendering.
+`select().where()` remains enabled on enhanced clients, which also satisfy native
+`SqlClient` contracts. See the [guide and limitations](docs/zh-CN/query-functions.md).
+
 ## Requirements and release status
 
 - Node.js **>=20**.
-- Host-provided `@ts-grm/core` and `@ts-grm/sql`: **`>=0.0.13 <0.0.14`**.
-  Upstream implementations are never bundled.
-- The enhancements described here are available in **0.3.1**; see the
-  [release notes](CHANGELOG.md#031).
+- Host-provided `@ts-grm/core` and `@ts-grm/sql`: **`>=0.0.13 <0.0.15`** (verified against
+  both `0.0.13` and `0.0.14`). Upstream implementations are never bundled.
+- Current release: **`0.4.0`** (see [release notes](CHANGELOG.md#040---2026-11-27)).
+  **Note**: `0.3.1` was unpublished due to poor native API alignment and high
+  per-instance wrapping overhead; install **`0.4.0`** directly.
 
 ```bash
-pnpm add ts-grm-patches@0.3.1 @ts-grm/core@0.0.13 @ts-grm/sql@0.0.13
+pnpm add ts-grm-patches@0.4.0 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
 ```
 
 For query enhancements, create or enhance a client. `applyPatches()` is the separate
@@ -256,10 +276,16 @@ field. An explicit model array works too.
 
 ## BOOL and TEXT columns in queries
 
-In `@ts-grm/core` 0.0.13, `createTableProp` only builds property expressions for numeric,
-`STR` and `DATETIME` columns. A `prop.bool()` or `prop.text()` column therefore throws
-`ArgumentError: Cannot create table prop … whose scalar type is BOOL/TEXT` as soon as it is
-used in `where` / `orderBy` / `select`.
+In `@ts-grm/core` `0.0.13`, `createTableProp` only builds property expressions for numeric,
+`STR` and `DATETIME` columns, so both `prop.bool()` and `prop.text()` throw
+`ArgumentError: Cannot create table prop … whose scalar type is BOOL/TEXT` when used in
+`where` / `orderBy` / `select`.
+
+In **`0.0.14`**, upstream fixed **runtime `BOOL` queries** (`case "BOOL"` in
+`createTableProp`) and **nullable `BOOL` `NULL` decoding** (`DataRowReader`), so this
+package's runtime getter automatically steps aside for `BOOL` on `0.0.14`. However,
+**runtime `TEXT` queries** (`createTableProp` still lacks `case "TEXT"`) and the
+**`BOOL` type-level distribution issue** remain unfixed in `0.0.14`.
 
 `applyPatches()` wraps `spi.Entity.prototype.tableClass` and gives those two kinds a property
 expression (`BOOL` → a comparable expression, `TEXT` → a full string expression with
@@ -299,13 +325,11 @@ inferred as `Expression<boolean>`. It produces exactly the same column, so switc
 columns: upstream `nullable()` drops the marker.
 
 > [!WARNING]
-> **Upstream problem — reading `NULL` from a nullable boolean column returns `true`.**
-> `@ts-grm/sql` 0.0.13 converts a `BOOL` value before checking for `NULL`, so a `NULL` stored
-> in a nullable boolean column is read back as `true`, with no error. This happens in
-> upstream's internal row reader, which this package cannot reach, and it affects
-> `prop.bool().nullable()` with or without this package. Filtering is not affected
-> (`where(a.pinned.isNull())` works); only reading the value back is. Until upstream fixes
-> it, prefer non-null boolean columns with a default, e.g. `bool().default(false)`.
+> **Upstream 0.0.13 problem (fixed in 0.0.14) — reading `NULL` from a nullable boolean column returns `true`.**
+> `@ts-grm/sql` `0.0.13` converts a `BOOL` value before checking for `NULL`, so a `NULL` stored
+> in a nullable boolean column is read back as `true`, with no error. This was fixed in
+> `@ts-grm/sql` **`0.0.14`** (`DataRowReader` now checks `value != null`). If you are still on
+> `0.0.13`, prefer non-null boolean columns with a default, e.g. `bool().default(false)`.
 
 ## Data flow
 
@@ -318,7 +342,7 @@ prop.i32().autoIncrement()          // writes a field into __PropData
     → ColumnDef.prop                // schema_creator holds that EntityProp
 ```
 
-`applyPatches()` does three things:
+`applyPatches()` also installs native expression methods and string-renderer repairs, in addition to these metadata steps:
 
 1. installs `autoIncrement()` / `default(value)` on `__ScalarProp`
 2. installs read-only `autoIncrement` / `default` readers on `spi.EntityProp`
@@ -340,7 +364,7 @@ queries, the patch steps aside — it never overwrites.
   `orderBy`, `groupBy` and `autoGroupBy` until the owning callback completes.
 - `getFunctionMetadata(expression)` / `QuerySemanticError` — metadata inspection
   and explicit construction-time semantic errors.
-- `EnhancedSqlClient`, `Chained*Expression`, `DialectProfile`, `DialectOptions` —
+- `EnhancedSqlClient`, `DialectProfile`, `DialectOptions` —
   public types for client, expression and declaration boundaries.
 - `applyPatches(): void` — installs the patch. Idempotent; must run before any
   `model(...)` definition.
@@ -377,13 +401,22 @@ if (isColumnDefaultExpression(d)) {
 
 ## Known limitations
 
+- The coalesce array bridge targets 0.0.13 and its current peer range. Review or
+  remove it before supporting an upstream version with native variadic coalesce;
+  this repair does not automatically yield to that future implementation.
+
 - `applyPatches()` must run before any `model(...)` definition. With ES modules, imports are
   evaluated before the importing module's body, so calling it at the top of `main.ts` is too
-  late if `main.ts` also imports your model modules. Call it in a small module of its own and
-  import that module first.
-- The type augmentation (`autoIncrement()` / `default()` on props) is visible as soon as this
-  package's types are loaded — even through `import type`. The methods only exist at runtime
-  after `applyPatches()` has been called.
+  late if `main.ts` also imports your model modules. Call it in a small module of its own (e.g.
+  `src/patches.ts`) and import that module first; for test runners that isolate files in workers,
+  add it to `setupFiles`.
+- The type augmentations (`autoIncrement()` / `default()` on props and chained methods on native
+  expressions) become visible across the whole project as soon as any file covered by your
+  `tsconfig.json` imports this package's types (a single `src/patches.ts` entry suffices in a
+  single-package project; other files do not need to import `ts-grm-patches`). If a separate
+  monorepo package or standalone `tsconfig` does not include that entry, add a `.d.ts` file
+  containing `import 'ts-grm-patches'`. At runtime, the methods only exist after `applyPatches()`
+  (or client creation/enhancement for expression extensions) has run.
 - The metadata/BOOL/TEXT installer extends prototypes from `@ts-grm/core`. If two copies of
   the upstream package (ESM and CJS) are loaded in one process, only one of them
   gets patched. The expression discriminator above avoids this pitfall.

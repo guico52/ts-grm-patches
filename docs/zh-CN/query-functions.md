@@ -1,5 +1,7 @@
 # 查询函数与自动分组
 
+> 自 `0.4.0` 起全面采用原位链式增强；旧版 `0.3.1` 因 API 割裂与性能问题已从 npm 撤回，请直接使用 `0.4.0`。
+
 `enhanceClient(client)` 为指定的原生 ts-grm client 添加函数上下文，并在其查询回调中添加 `q.fn` 和 `q.autoGroupBy()`。返回值仍然是同一个 client；请使用返回值获得增强后的 TypeScript 类型。
 
 新建 client 推荐使用本包的 newSqlClient 工厂，在创建时绑定数据库类别，获得公共函数与当前方言命名空间的精确类型；参见[创建时绑定数据库方言](./dialect-clients.md)。根入口 enhanceClient 接收类型已擦除的原生 SqlClient 时，只静态暴露公共函数；通过对应方言子路径的 enhanceClient 校验后可恢复精确类型。
@@ -35,7 +37,7 @@ db.createQuery(ORDER, (q, t) =>
 
 重复调用 where 会按原生规则通过 AND 合并。条件既可以写在 select 前，也可以写在后面；聚合分析、分组推导和 HAVING 校验统一在同步查询回调结束时进行，之后交给原生引擎。WHERE 始终是聚合前的行过滤，不因写在 select 后就变为 HAVING。
 
-每个回调调用一次 select，并返回该投影。回调结束后条件构建关闭，不能保留 q 或投影引用再改变已构建的查询；根查询上的 fetchList、limit、offset 等原生操作继续按原方式使用。
+回调可以构造多个投影，最终返回的原生投影决定结果。回调结束后，投影附加的链式条件入口关闭；原生查询方法保留原契约。启用 autoGroupBy 时须在同步回调中完成条件构建。根查询的 fetchList、limit、offset 等原生操作继续按原方式使用。
 
 ## 链式嵌套 SQL 函数
 
@@ -53,19 +55,35 @@ q.fn.min(t.name).coalesce('empty').concat('!').upper()
 q.fn.upper(t.name).position('X').plus(1)
 ```
 
-普通业务参数仍由原生绑定器绑定。字符串、数值、日期结果保留各自的方法和可空性推导，position 的结果可以继续数值运算，concat、coalesce 的结果也可继续字符串变换。coalesce 使用变长参数形式且至少提供一个 fallback。
+普通业务参数仍由原生绑定器绑定。字符串、数值、日期结果保留各自的方法和可空性推导，position 的结果可以继续数值运算，concat、coalesce 的结果也可继续字符串变换。coalesce 使用变长参数形式且至少提供一个 fallback。concat 的两个入口统一只接受字符串或字符串表达式，拒绝数字、布尔和 null 字面量；无参数的字段 `.concat()` 直接返回原表达式。
 
-增强只添加到表达式实例，保留 AST 对象身份、prototype 和 Visitor；不修改全局表达式原型。函数形式与链式形式进入同一函数上下文，再选择方言实现或保存的原生方法，避免相互转调造成递归。公开类型包含 ChainedStrExpression、ChainedNumExpression、ChainedDateExpression，并可传回原生表达式 API。
+类型通过 `declare module '@ts-grm/core'` 合并到原生接口，不再导出 `Chained*Expression`。新增方法一次性安装在 SPI 原型上；表达式没有绑定函数 getter 或每实例方法描述符。已有方法继续产生原生 AST，缺失的方言渲染在 Driver NodeRender 层补齐。新增方法通过 defineOnce 尊重上游已有实现；0.0.13 的已知静默渲染缺陷采用定向修复。
 
-表达式增强按原生 prototype 缓存方法描述，链式值变换在首次访问时才创建并缓存绑定方法。实例自有方法与通过 getter 返回的方法保留各自的原始实现，不会在其他实例间串用。比较与排序方法保留原生调用方式，操作数中的函数依赖仍参与方言和聚合检查；对应的 q.fn.eq、q.fn.asc 等函数入口继续提供。性能对比见[性能核查](./query-performance.md#性能优先改写后的复测)。
+```ts
+t.amount.times(t.qty).sum().abs().round(2).coalesce(0)
+dsl.sum(t.amount).abs().round(2)
+t.name.min().trim()
+t.createdAt.max().plus(1, 'DAYS')
+t.status.eq('active').and(t.id.eqIf(id)).not()
+```
 
-标量子查询经 distinct 创建的新实例也继续增强，asValue 后可接 coalesce 等 SQL 函数；这不扩大 autoGroupBy 对子查询自动推导的范围。已验证的上游 0.0.13 不生成子查询 LIMIT/OFFSET，增强层会对这两种调用报告 UNSUPPORTED_SUBQUERY_PAGINATION，防止静默丢失分页；根查询的 limit/offset 不受此限制。
+`applyPatches()` 或首次创建/增强 client 会安装表达式原型方法及字符串渲染修复，影响同一份 core/sql 模块中的原生表达式及五种 Driver 的 NodeRender 原型；仅导入包不安装。原生 client 无需附加 q.fn 即可使用已安装的方法。链式方法遵循原生 receiver 约定；提取方法后调用须显式 bind。
+
+数学函数、concat、长度及 countDistinct 使用保存 fnName/kind/args 的中立节点，渲染时根据当前 visitor.sqlClient.driver 降级。因此同一个通用表达式可以跨方言复用，专有函数仍受方言限制。PreVisitor 遍历原始参数，autoGroupBy 保留聚合边界。能力校验在增强查询回调结束时执行，渲染时再次兜底；参数校验不生成临时 SQL AST，渲染函数集按不可变 profile 通过 WeakMap 复用；独立构造表达式不进行数据库能力检查。
+
+逻辑链式方法通过 this: Predicate 限制调用。不要用 `t.id.eqIf(id)?.and(other)` 组合可空谓词：第一个条件为空时会连带丢弃 other；请以非空谓词起头，或用原生 `dsl.and(...)`。
+
+标量子查询经 distinct 创建的新实例也继续增强，asValue 后可接 coalesce 等 SQL 函数；这不扩大 autoGroupBy 对子查询自动推导的范围。已验证的上游 0.0.13 不生成子查询 LIMIT/OFFSET，增强层会在使用该子查询的查询校验或 scalar/aggregate 标记阶段报告 UNSUPPORTED_SUBQUERY_PAGINATION，防止静默丢失分页；根查询的 limit/offset 不受此限制。
 
 外层 scalar 函数不会被误标成 aggregate；语义分析沿子节点保留内层聚合，因此 coalesce(avg(amount), 0) 仍按聚合结果处理。合法的标量函数嵌套可以组合；同一计算阶段的 SUM(AVG(...)) 等聚合嵌套仍由自动分组分析拒绝。
 
+字符串 start/length 的字面量范围校验在增强查询阶段统一执行，覆盖函数入口和直接字段调用，包含 substring 的第二个 length 参数；原生 client 在渲染时校验。动态数值表达式不进行符号或范围推断。
+
+`coalesce` 数组桥接仅针对当前 0.0.13 peer 范围，未来放开版本范围时必须复核或删除；它不会对未来的原生变长实现自动让位。
+
 ## 接入和函数范围
 
-- 不需要安装全局查询补丁，`enhanceClient()` 可重复调用，与 `applyPatches()` 独立。列声明、BOOL/TEXT 等现有补丁仍按原流程安装。
+- `enhanceClient()` 可重复调用，并安装共享表达式原型增强；查询回调增强仍只作用于指定 client。列声明、BOOL/TEXT 等现有补丁仍按原流程安装。
 - 覆盖当前支持的 `@ts-grm/core@0.0.13` 的所有 `dsl` 入口，包括聚合、逻辑、子查询、集合运算、BaseQuery、派生模型、CTE、常量、tuple 和 native。
 - 所有公开字符串、数值、日期、EnumSet 和通用表达式方法均提供函数形式：如 `q.fn.lower(expr)`、`q.fn.times(expr, 2)`、`q.fn.plus(dateExpr, 1, 'DAYS')`、`q.fn.eq(expr, value)`。
 - 保留并增强返回表达式上的原生链式方法。`q.fn.sum(t.amount).coalesce(0).plus(t.tax)` 与函数形式都能参与自动分组分析。
@@ -111,7 +129,7 @@ round 的 digits 仅接受非负安全整数，缺省为 0；trunc 当前只支�
 - position 在 PostgreSQL/MySQL/SQLite/SQL Server/Oracle 分别使用 STRPOS/LOCATE/INSTR/CHARINDEX/INSTR。支持 start；PostgreSQL/SQLite 使用子串查找后修正偏移，未找到返回 0，NULL 输入返回 NULL。
 - trim 在 SQL Server 使用 LTRIM(RTRIM(x))，不依赖 SQL Server 2017 的 TRIM。
 - lpad/rpad 在 PostgreSQL/MySQL/Oracle 使用原生函数；SQLite 使用 zeroblob/hex/replace 生成重复填充串，SQL Server 使用 REPLICATE，按目标字符长度截取。这两个展开实现会在长度不足时截短原串，空 fill 不补齐，NULL 输入返回 NULL；原生函数对空 fill 的处理仍遵循厂商规则。
-- SQLite、Oracle 的 reverse 缺少受支持的原生实现，构造时报告 UNSUPPORTED_FUNCTION；若部署了 UDF，可通过对应方言的 call 声明调用。
+- SQLite、Oracle 的 reverse 缺少受支持的原生实现，增强查询回调结束时报告 UNSUPPORTED_FUNCTION；若部署了 UDF，可通过对应方言的 call 声明调用。
 
 start 字面量必须为正安全整数，length 字面量必须为非负安全整数；传入数值表达式时由调用者保证同样的值域。长度以字符计并保留尾部空格，字节长度取决于数据库编码和存储类型。字符计数及查找仍遵循数据库字符集/排序规则；SQLite 的内嵌 NUL、Oracle 的空字符串等厂商行为不做统一转换。SQL Server 旧版本需使用标准的 CONCAT_NULL_YIELDS_NULL ON 设置。补齐、带 start 的查找等展开式可能多次引用输入，应避免依赖易变函数的单次求值语义。
 
@@ -128,7 +146,7 @@ const db = newSqlClient(
 )
 ```
 
-SQLite 的 ceil/floor/trunc/sqrt/exp/ln/log10/power 要求 sqlite.mathFunctions 显式为 true，表示部署环境提供 SQLITE_ENABLE_MATH_FUNCTIONS；abs/sign/round 不依赖该编译选项。octetLength 要求声明 SQLite >= 3.43，或 sqlite.octetLength 为 true；显式 false 优先禁用。未满足要求时构造表达式即报 UNSUPPORTED_FUNCTION。声明不安装扩展，也不触发联网探测。
+SQLite 的 ceil/floor/trunc/sqrt/exp/ln/log10/power 要求 sqlite.mathFunctions 显式为 true，表示部署环境提供 SQLITE_ENABLE_MATH_FUNCTIONS；abs/sign/round 不依赖该编译选项。octetLength 要求声明 SQLite >= 3.43，或 sqlite.octetLength 为 true；显式 false 优先禁用。未满足要求时增强查询回调结束即报 UNSUPPORTED_FUNCTION；原生 client 在渲染时报告。声明不安装扩展，也不触发联网探测。
 
 @see [PostgreSQL 数学函数](https://www.postgresql.org/docs/15/functions-math.html)
 @see [SQLite 数学函数与编译选项](https://www.sqlite.org/lang_mathfunc.html)
@@ -168,7 +186,7 @@ q.fn.sum(t.amount, { as: 'string' }) // string | null
 ```
 
 - AVG 的 number 模式使用 FLOAT 读取标记，避免上游 AVG(integer) 对字符串小数调用 parseInt。
-- MIN/MAX 的字符串、日期、EnumSet 结果保留相应运行时方法；例如 `q.fn.min(t.name).lower()`。
+- MIN/MAX 的字符串、日期、EnumSet 结果保留相应运行时方法；例如 `t.name.min().lower()` 或 `q.fn.min(t.name).lower()`。原生 `dsl.min/max` 仍返回数值运行时类，字符串/日期聚合后继续链式时须使用前两种入口；原生 `dsl.avg` 的整数读取标记也不被替换，请用 `.avg()` 或 `q.fn.avg()`。
 - 函数式与链式 position 均返回数值表达式；coalesce 均按公开的变长参数形式调用，并适配上游运行时需要数组的差异。
 - `q.fn.native.num` 使用 FLOAT 标记读取小数；`.asString` 继续提供字符串读取。`q.fn.constant` 也区分整数和小数读取标记。
 - string 模式只控制读取，SQL 中仍是数值表达式。不保证恢复驱动已丢失的精度，也不把 SQLite REAL 等近似计算变成精确计算。
@@ -217,7 +235,7 @@ autoGroupBy 是显式选择：不调用它时不会自动增加 GROUP BY。没�
 - 参数化分组键在 SELECT/GROUP BY 中重复绑定，不能保证数据库将两个占位符视为同一表达式。
 - 子查询参与自动推导、实体 fetch/复杂 DTO 投影、同一阶段嵌套聚合、WHERE 中直接使用聚合。
 - 无分组键的 HAVING；应先做聚合 BaseQuery，再在外层 WHERE 过滤。
-- 同时使用 HAVING 和 ORDER BY：已安装上游 0.0.13 的生成器将 ORDER BY 放在 HAVING 前，增强查询拒绝该组合，外层查询排序即可。
+- 同时使用 HAVING 和 ORDER BY：已安装上游 0.0.13 的生成器将 ORDER BY 放在 HAVING 前，autoGroupBy 查询拒绝该组合；普通原生查询保留上游行为，外层查询排序即可。
 
 参数化键可显式分层，只绑定一次：
 
