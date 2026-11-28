@@ -100,7 +100,9 @@ function enhanceQuery(q: MutableQuery, fn: QueryFunctions, profile: DialectProfi
   let automatic = false
   let closed = false
   const bufferedHaving: unknown[] = []
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Saved so groupBy/having can be re-applied with Reflect.apply against the query receiver.
   const originalGroupBy = q.groupBy as unknown as Call
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Saved so groupBy/having can be re-applied with Reflect.apply against the query receiver.
   const originalHaving = q.having as unknown as Call
   const state = q as unknown as NativeMutableQueryState
   const assertOpen = () => {

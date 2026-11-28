@@ -48,9 +48,21 @@ contracts. See the [guide and limitations](docs/zh-CN/query-functions.md).
 
 ## Requirements and release status
 
-- Node.js **>=20**.
-- Host-provided `@ts-grm/core` and `@ts-grm/sql`: **`>=0.0.13 <0.0.15`** (verified against
-  both `0.0.13` and `0.0.14`). Upstream implementations are never bundled.
+- Node.js **>=20**, with one upstream-dependent caveat below.
+- Host-provided `@ts-grm/core` and `@ts-grm/sql`: **`>=0.0.13`** (no upper bound; verified
+  against `0.0.13` and `0.0.14`). Upstream implementations are never bundled. The peer
+  range deliberately has no ceiling so a new upstream minor does not produce a
+  peer-conflict on install; see the coalesce note under Known limitations for the one
+  repair that is tied to a specific upstream version.
+
+> [!IMPORTANT]
+> **Upstream `0.0.13` requires Node >=24.** Its published bundle contains
+> `using` declarations (explicit resource management) untranspiled, so on Node 20/22 it
+> fails at _import_ time with `SyntaxError: Unexpected identifier '_'` — before any code
+> from this package runs. `0.0.14` transpiles that syntax and works on Node 18+.
+> If you must stay on Node 20/22, pin `@ts-grm/core` and `@ts-grm/sql` to `>=0.0.14`.
+> The CI matrix encodes this: `0.0.13` is tested only on Node 24.
+
 - Current release: **`0.4.1`** (see [release notes](CHANGELOG.md#041---2026-11-27);
   includes a breaking change removing `select().where()` in favor of native
   `q.where(...).autoGroupBy().select(...)`). `0.3.1` was unpublished due to poor native API
@@ -110,8 +122,11 @@ SQLite optional math and octetLength require version/capability declarations.
 Function semantics, precision, NULL behavior and Unicode handling retain documented
 vendor boundaries. Upstream aggregate counting is not repaired by this layer.
 Query enhancement has measurable CPU overhead; see the [before/after performance
-review](docs/zh-CN/query-performance.md). SQLite has real execution coverage;
-the other four families have native-renderer/parameter tests, not server integration coverage.
+review](docs/zh-CN/query-performance.md). All five families now have real server
+execution coverage: SQLite via `node:sqlite` in memory, and PostgreSQL, MySQL,
+SQL Server and Oracle against real instances (`test/server/`). The dialect
+differences these tests pin down — MySQL/SQL Server case-insensitive collation,
+Oracle byte-length padding — are listed under Known limitations.
 
 ## Upstream issues
 
@@ -400,9 +415,12 @@ if (isColumnDefaultExpression(d)) {
 
 ## Known limitations
 
-- The coalesce array bridge targets 0.0.13 and its current peer range. Review or
-  remove it before supporting an upstream version with native variadic coalesce;
-  this repair does not automatically yield to that future implementation.
+- The coalesce array bridge targets the upstream implementations verified so far
+  (`0.0.13`–`0.0.14`), where variadic `coalesce` is declared publicly but the SPI takes a
+  single array. Because the peer range has no upper bound, this is the one repair that
+  will **not** step aside automatically: if a future upstream ships a native variadic
+  implementation, review or remove the bridge in `src/expression-extensions.ts` and add
+  that version to the test matrix.
 
 - `applyPatches()` must run before any `model(...)` definition. With ES modules, imports are
   evaluated before the importing module's body, so calling it at the top of `main.ts` is too
@@ -419,6 +437,11 @@ if (isColumnDefaultExpression(d)) {
 - The metadata/BOOL/TEXT installer extends prototypes from `@ts-grm/core`. If two copies of
   the upstream package (ESM and CJS) are loaded in one process, only one of them
   gets patched. The expression discriminator above avoids this pitfall.
+- Oracle pads strings by **byte** length under the default `NLS_LENGTH_SEMANTICS=BYTE`
+  (e.g. `AL32UTF8`), so `lpad` / `rpad` on a multibyte source yields one character
+  fewer than the requested width. MySQL and SQL Server compare strings
+  case-insensitively under their default collations. Neither behaviour is normalized
+  by this package; both are pinned by `test/server/` so a change is visible.
 - The BOOL / TEXT query patch covers scalar properties declared directly on an entity; properties
   inside embedded values and on middle (association) entities are not covered.
 - `createGlobalFilterManager()` is async (it takes the models from an `EntityManager`), and —
@@ -434,6 +457,7 @@ pnpm typecheck      # tsc --noEmit
 pnpm lint           # ESLint
 pnpm format         # Prettier
 pnpm test           # vitest run (includes end-to-end: real model → createSchema() → column metadata)
+pnpm verify:tags    # check release tags against the npm registry
 pnpm test:exports   # build and verify all ESM/CJS dialect entry points together
 pnpm bench:query    # isolated-process query construction/rendering comparison
 pnpm coverage       # test coverage
@@ -446,8 +470,16 @@ The package is published in two formats: ESM (`dist/index.js`) and CJS
 (`dist/index.cjs`), with type declarations exposed through `exports` as
 `dist/index.d.ts` / `dist/index.d.cts`.
 
-Publishing and pre-publish verification are performed locally by the maintainer;
-this repository ships no CI and no `prepublishOnly` hook.
+CI runs on GitHub Actions for Node 20/22/24 crossed with upstream `@ts-grm`
+`0.0.13`/`0.0.14` (`.github/workflows/ci.yml`): typecheck, lint, tests with
+coverage thresholds, and the published-entry contract checks. A separate job
+starts PostgreSQL, MySQL, SQL Server and Oracle containers and runs
+`test/server/` against them with `REQUIRE_SERVER_TESTS=1`, so the server
+execution coverage cannot silently disappear.
+
+`prepublishOnly` runs typecheck, lint, tests and the build before `npm publish`.
+`pnpm verify:tags` checks that the local release tags still match what npm
+records for each published version.
 
 ## License
 

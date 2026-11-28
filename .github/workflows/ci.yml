@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Unit-level gate across the Node versions the package claims (`engines: >=20`) and
+  # the two upstream releases it verifies against.
+  #
+  # The combinations are not the full cross product, for a measured reason:
+  # `@ts-grm/sql@0.0.13` ships explicit-resource-management (`using`) syntax untranspiled,
+  # so it fails to *parse* on Node <24 ("SyntaxError: Unexpected identifier '_'").
+  # `0.0.14` transpiles it and works on 18+. Testing 0.0.13 below Node 24 therefore only
+  # produces a syntax error rather than a useful signal.
+  static-and-unit:
+    name: node ${{ matrix.node }} / ts-grm ${{ matrix.ts-grm }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: '20'
+            ts-grm: '0.0.14'
+          - node: '22'
+            ts-grm: '0.0.14'
+          - node: '24'
+            ts-grm: '0.0.13'
+          - node: '24'
+            ts-grm: '0.0.14'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # verify:tags needs the tag objects
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Pin upstream @ts-grm to the matrix version
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.devDependencies["@ts-grm/core"] = process.env.TS_GRM;
+            pkg.devDependencies["@ts-grm/sql"] = process.env.TS_GRM;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
+          pnpm install --no-frozen-lockfile
+        env:
+          TS_GRM: ${{ matrix.ts-grm }}
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+
+      - run: pnpm coverage
+        env:
+          # Real `node:sqlite` execution needs Node >=22.3 (22.5 for the default flag).
+          # Node 20 must not enforce it, but the test prints why it skipped so the
+          # coverage gap stays visible in the log.
+          REQUIRE_REAL_SQLITE: ${{ matrix.node != '20' && '1' || '' }}
+
+      - run: pnpm test:exports
+
+      - name: Verify release tags against npm
+        if: matrix.node == '24' && matrix.ts-grm == '0.0.14' && github.event_name != 'pull_request'
+        run: pnpm verify:tags
+
+  # Real server execution against PostgreSQL, MySQL, SQL Server and Oracle.
+  #
+  # Runs once rather than per matrix leg: each leg needs four database containers, and the
+  # SQL this package generates depends on the upstream release, not on the Node version
+  # (already covered above).
+  server-execution:
+    name: server execution (postgres, mysql, sqlserver, oracle)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: testdb
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d testdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: testdb
+        ports: ['53306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -uroot -ptest --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: 'Str0ng!Passw0rd'
+          MSSQL_PID: Developer
+        ports: ['51433:1433']
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Str0ng!Passw0rd -C -Q 'select 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
+      oracle:
+        image: gvenzl/oracle-free:23-slim
+        env:
+          ORACLE_PASSWORD: test
+          APP_USER: testuser
+          APP_USER_PASSWORD: test
+        ports: ['51521:1521']
+        options: >-
+          --health-cmd "healthcheck.sh"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 40
+
+    env:
+      GRM_PG_URL: postgres://postgres:test@127.0.0.1:55432/testdb
+      GRM_MYSQL_URL: mysql://root:test@127.0.0.1:53306/testdb
+      GRM_MSSQL_URL: sqlserver://sa:Str0ng%21Passw0rd@127.0.0.1:51433?database=master
+      GRM_ORACLE_URL: oracle://testuser:test@127.0.0.1:51521/FREEPDB1
+      REQUIRE_SERVER_TESTS: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run server execution tests
+        run: pnpm exec vitest run test/server --reporter=verbose

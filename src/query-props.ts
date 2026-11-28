@@ -134,6 +134,7 @@ function patchTableClass(entity: spi.Entity, ctor: EntityTableCtor): void {
       continue
     }
     const descriptor = Object.getOwnPropertyDescriptor(ctor.prototype, prop.name)
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Upstream getter is re-installed and always invoked with the table instance as receiver.
     const upstream = descriptor?.get
     if (upstream === undefined) {
       continue
@@ -156,6 +157,7 @@ function patchTableClass(entity: spi.Entity, ctor: EntityTableCtor): void {
 /** 安装查询侧补丁（由 `applyPatches()` 调用一次）。 */
 export function installQueryProps(): void {
   const proto = spi.Entity.prototype
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Upstream tableClass is invoked with an explicit receiver.
   const upstream = proto.tableClass
   proto.tableClass = function (this: spi.Entity): EntityTableCtor {
     const ctor = upstream.call(this)

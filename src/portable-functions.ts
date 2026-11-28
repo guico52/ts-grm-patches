@@ -148,6 +148,10 @@ export function createPortableFunctions(profile: DialectProfile): PortableFuncti
       if (name === 'trunc' && dialect === 'mysql') return result(name, ['truncate(', input, ', 0)'])
       if (name === 'trunc' && dialect === 'sqlserver')
         return result(name, ['round(', input, ', 0, 1)'])
+      // Postgres has trunc(numeric) and trunc(double precision), so an untyped bind
+      // parameter makes the call ambiguous ("function trunc(unknown) is not unique").
+      if (name === 'trunc' && dialect === 'postgres')
+        return result(name, ['trunc(cast(', input, ' as numeric))'])
       if (name === 'log10' && dialect === 'oracle') return result(name, ['log(10, ', input, ')'])
       return result(name, callParts(sql, [input]))
     }
@@ -174,11 +178,16 @@ export function createPortableFunctions(profile: DialectProfile): PortableFuncti
     const input = number(value)
     const exp = number(exponent)
     // SQL Server's POWER(int, negative exponent) otherwise returns an integer.
+    // Postgres has both power(numeric, numeric) and power(double precision, double
+    // precision), so untyped bind parameters do not resolve ("function power(unknown,
+    // unknown) does not exist"); cast both operands instead.
     return result(
       'power',
       dialect === 'sqlserver'
         ? ['power(cast(', input, ' as float), ', exp, ')']
-        : callParts('power', [input, exp]),
+        : dialect === 'postgres'
+          ? ['power(cast(', input, ' as numeric), cast(', exp, ' as numeric))']
+          : callParts('power', [input, exp]),
     )
   }
   // @see https://learn.microsoft.com/en-us/sql/t-sql/functions/len-transact-sql

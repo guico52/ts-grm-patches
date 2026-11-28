@@ -270,6 +270,7 @@ export function createQueryFunctions<D extends Dialect>(
   }
   functions.native = Object.freeze({
     num: Object.assign(nativeNumber, {
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Native template tags are re-applied with an explicit receiver by callNative.
       asString: native('native.num.asString', dsl.native.num.asString),
     }),
     str: native('native.str', dsl.native.str),

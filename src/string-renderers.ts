@@ -162,7 +162,7 @@ export function installStringRenderers() {
   installed = true
   // No pool operation occurs: native driver renderers are created synchronously.
   for (const Driver of [PostgresDriver, MySqlDriver, SqliteDriver, SqlServerDriver, OracleDriver]) {
-    const renderer = new Driver({} as never).nodeRender
-    repair(Object.getPrototypeOf(renderer) as object)
+    const renderer = new Driver({}).nodeRender
+    repair(Object.getPrototypeOf(renderer))
   }
 }

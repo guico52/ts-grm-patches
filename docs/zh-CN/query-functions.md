@@ -67,7 +67,7 @@ t.status.eq('active').and(t.id.eqIf(id)).not()
 
 字符串 start/length 的字面量范围校验在增强查询阶段统一执行，覆盖函数入口和直接字段调用，包含 substring 的第二个 length 参数；原生 client 在渲染时校验。动态数值表达式不进行符号或范围推断。
 
-`coalesce` 数组桥接仅针对当前 0.0.13 peer 范围，未来放开版本范围时必须复核或删除；它不会对未来的原生变长实现自动让位。
+`coalesce` 数组桥接针对的是已验证的上游实现（0.0.13–0.0.14）：其公开声明为变长，但 SPI 只接受一个数组。由于 peer 范围已去掉上限，这是唯一**不会**自动让位的修复——上游若发布原生变长实现，需复核或删除 `src/expression-extensions.ts` 中的桥接，并把该版本加入测试矩阵。
 
 ## 接入和函数范围
 
@@ -204,7 +204,7 @@ q.fn.postgres.call({ name: 'my_schema.custom_sum', kind: 'aggregate', result: 'n
 
 函数名只接受受控的普通标识符或点分标识符，参数仍绑定。`result` 可选 number/string/date/boolean/unknown；boolean 表示驱动实际返回原生 boolean，不把任意数字自动解释成 boolean。专有函数保留厂商语义；MySQL jsonContains、SQL Server isJson 等数值谓词返回 number。表值函数、需要特殊 SQL 语法或窗口 OVER 的函数不能通过此接口伪装成标量调用。
 
-不自动探测服务端版本、编译选项和扩展，不静默修改 session 配置。使用方须保证目标数据库具备相应函数。当前仅对 SQLite 做真实执行验证，其他方言模板通过 SQL/绑定测试，不构成五库完整执行兼容承诺。
+不自动探测服务端版本、编译选项和扩展，不静默修改 session 配置。使用方须保证目标数据库具备相应函数。五个方言均有真实服务端执行验证（`test/server/`），覆盖数值、字符串、NULL、聚合分组与部分专有函数；这不构成所有函数在所有输入下等价的承诺，Oracle 的字节填充与 MySQL/SQL Server 的默认排序规则差异见已知限制。
 
 @see [PostgreSQL JSON](https://www.postgresql.org/docs/15/functions-json.html)
 @see [MySQL JSON](https://dev.mysql.com/doc/refman/8.0/en/json-search-functions.html)

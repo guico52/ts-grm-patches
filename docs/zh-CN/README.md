@@ -21,9 +21,12 @@
 
 ## 依赖与发布状态
 
-- Node.js **>=20**。
-- 宿主项目提供 `@ts-grm/core` 和 `@ts-grm/sql`，支持范围为 **`>=0.0.13 <0.0.15`**（已实测验证 `0.0.13` 与 `0.0.14`）；本包不打包上游实现。
+- Node.js **>=20**（有一个与上游版本相关的限制，见下）。
+- 宿主项目提供 `@ts-grm/core` 和 `@ts-grm/sql`，支持范围为 **`>=0.0.13`**（不设上限；已实测验证 `0.0.13` 与 `0.0.14`）；本包不打包上游实现。不设上限是为了避免上游发布新的次版本后安装时产生 peer 冲突；唯一与具体上游版本绑定的修复见「已知限制」中的 coalesce 说明。
 - 当前发布版本为 **`0.4.1`**，详见[版本记录](../../CHANGELOG.md#041---2026-11-27)（包含破坏性变更：移除 `select().where()`，统一回原生 `q.where(...).autoGroupBy().select(...)` 语法）。`0.3.1` 因逐实例包装与原生 API 割裂严重且性能损耗大，已被作者从 npm 撤回。
+
+> [!IMPORTANT]
+> **上游 `0.0.13` 需要 Node >=24。** 它发布的产物里 `using` 声明（显式资源管理）没有转译，在 Node 20/22 上会在 `import` 阶段直接抛 `SyntaxError: Unexpected identifier '_'`，此时本包的任何代码都还没执行。`0.0.14` 已转译该语法，Node 18+ 可用。若必须停留在 Node 20/22，请把 `@ts-grm/core` 与 `@ts-grm/sql` 固定到 `>=0.0.14`。CI 矩阵据此设计：`0.0.13` 只在 Node 24 上测试。
 
 ```bash
 pnpm add ts-grm-patches@0.4.1 @ts-grm/core@0.0.14 @ts-grm/sql@0.0.14
@@ -63,7 +66,7 @@ const rows = await db
 
 通用函数包含 abs/sign/ceil/floor/round/trunc/power/sqrt/exp/ln/log10、charLength/octetLength、countDistinct，并适配字符串截取、查找、补齐、trim。方言命名空间覆盖部分 JSON、数组、全文检索和日期函数，call 提供普通函数/UDF 的显式契约。完整列表及能力门槛见[查询函数文档](./query-functions.md)。
 
-SQLite 可选数学函数与 octetLength 需要相应版本/能力声明。精度、NULL、Unicode 等保留已说明的厂商边界；此增强层没有修复上游聚合计数。查询增强有可测量的 CPU 开销，详见[优化前后性能报告](./query-performance.md)。SQLite 有真实执行验证，其他四库目前验证原生 renderer 与参数绑定，尚无服务端集成验证。
+SQLite 可选数学函数与 octetLength 需要相应版本/能力声明。精度、NULL、Unicode 等保留已说明的厂商边界；此增强层没有修复上游聚合计数。查询增强有可测量的 CPU 开销，详见[优化前后性能报告](./query-performance.md)。五个方言现在都有真实服务端执行验证：SQLite 通过内存 `node:sqlite`，PostgreSQL、MySQL、SQL Server、Oracle 连接真实实例（`test/server/`）。这些测试锁定了渲染字符串看不出来的差异，例如 MySQL/SQL Server 默认排序规则大小写不敏感、Oracle 按字节填充字符串，详见「已知限制」。
 
 ## 上游 issue
 

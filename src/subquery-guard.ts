@@ -3,11 +3,9 @@ import { QuerySemanticError } from './function-semantics'
 
 export function assertSubqueryPagination(value: object) {
   const marker = Reflect.get(value, '__type')
-  if (
-    typeof marker !== 'function' ||
-    !(Reflect.apply(marker, value, []) as { subQueryLike?: boolean }).subQueryLike
-  )
-    return
+  if (typeof marker !== 'function') return
+  const type: unknown = Reflect.apply(marker, value, [])
+  if (!(type as { subQueryLike?: boolean }).subQueryLike) return
   const options = Reflect.get(value, 'options') as Partial<spi.AtomQueryOptions> | undefined
   if ((options?.limit ?? -1) >= 0 || (options?.offset ?? 0) > 0) throw unsupported()
 }

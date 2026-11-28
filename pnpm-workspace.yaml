@@ -2,4 +2,7 @@
 # 本包是库，peer 依赖由宿主提供，不自动安装 @ts-grm/sql 的数据库驱动
 allowBuilds:
   esbuild: true
+  # oracledb 的安装脚本会下载/编译原生客户端。服务端测试只用 thin 模式（纯 JS），
+  # 因此显式跳过；需要 thick 模式的使用方在宿主项目里自行允许。
+  oracledb: false
 autoInstallPeers: false

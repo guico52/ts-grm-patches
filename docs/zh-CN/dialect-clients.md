@@ -105,6 +105,6 @@ profile、版本数组和 capability 字典均复制后冻结。serverVersion �
 
 ## 验证范围
 
-包含七个原生 driver 变体的创建、派生、身份/方言校验，以及 TypeScript 的跨方言拒绝测试。SQL 模板测试使用五种真实 driver/renderer，并模拟执行边界；SQLite 另外通过 SqliteDriver 在真实内存数据库执行查询，验证了派生后的过滤器和聚合函数。尚未连接 PostgreSQL、MySQL、SQL Server、Oracle 服务端进行集成验证。
+包含七个原生 driver 变体的创建、派生、身份/方言校验，以及 TypeScript 的跨方言拒绝测试。SQL 模板测试使用五种真实 driver/renderer，并模拟执行边界；SQLite 另外通过 SqliteDriver 在真实内存数据库执行查询，验证了派生后的过滤器和聚合函数。`test/server/` 还会在配置了 `GRM_PG_URL` / `GRM_MYSQL_URL` / `GRM_MSSQL_URL` / `GRM_ORACLE_URL` 时连接真实的 PostgreSQL、MySQL、SQL Server、Oracle 实例执行同类查询；CI 会启动这四个数据库并设置 `REQUIRE_SERVER_TESTS=1`，缺少任一目标即失败。
 
 @see [原生创建工厂与派生机制](https://github.com/babyfish-ct/ts-grm/blob/8c89604b65922b4626df4e3b8a74d509338ea5b7/packages/sql/src/sql_client.ts)

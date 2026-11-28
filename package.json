@@ -118,21 +118,29 @@
     "coverage": "vitest run --coverage",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "verify:tags": "node scripts/verify-release-tags.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:server": "vitest run test/server"
   },
   "peerDependencies": {
-    "@ts-grm/core": ">=0.0.13 <0.0.15",
-    "@ts-grm/sql": ">=0.0.13 <0.0.15"
+    "@ts-grm/core": ">=0.0.13",
+    "@ts-grm/sql": ">=0.0.13"
   },
+  "prepublishOnly": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@ts-grm/core": "0.0.13",
     "@ts-grm/sql": "0.0.13",
     "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
     "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
+    "mssql": "^12.8.1",
+    "mysql2": "^3.24.6",
+    "oracledb": "^26.0.0",
+    "pg": "^8.23.1",
     "prettier": "^3.9.9",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",

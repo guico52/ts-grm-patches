@@ -1015,10 +1015,43 @@ describe('q.fn native API extensions', () => {
   })
 })
 
-const sqlite = process.getBuiltinModule?.('node:sqlite') as typeof import('node:sqlite') | undefined
-describe.skipIf(!sqlite)('real SQLite execution through native SqliteDriver', () => {
+/**
+ * 真实执行测试依赖 Node 内置的 `node:sqlite`。该模块 22.3 起需 `--experimental-sqlite`，
+ * 22.5 起才默认可用；而本包声明支持 Node >=20，在 20 上根本没有这个模块。
+ *
+ * 因此这里不能静默跳过：跳过就意味着「SQLite 有真实执行覆盖」在最低支持版本上
+ * 悄悄失效。默认打印明确的跳过原因；设置 `REQUIRE_REAL_SQLITE=1`（CI 在 Node >=22
+ * 的任务里会设）后，缺少模块直接失败，避免覆盖度无声消失。
+ */
+const nodeSqlite = (() => {
+  const getBuiltin = (process as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule
+  if (typeof getBuiltin !== 'function') return undefined
+  try {
+    return getBuiltin('node:sqlite') as typeof import('node:sqlite') | undefined
+  } catch {
+    return undefined
+  }
+})()
+
+const realSqliteSkipReason = nodeSqlite
+  ? undefined
+  : typeof (process as { getBuiltinModule?: unknown }).getBuiltinModule !== 'function'
+    ? `process.getBuiltinModule is unavailable on Node ${process.version}; node:sqlite needs Node >=22.3`
+    : 'node:sqlite could not be loaded (Node >=22.3 needs --experimental-sqlite; Node >=22.5 has it by default)'
+
+if (realSqliteSkipReason) {
+  const message = `[real-sqlite] skipped real SQLite execution test: ${realSqliteSkipReason}`
+  if (process.env.REQUIRE_REAL_SQLITE === '1') {
+    throw new Error(
+      `${message}\nREQUIRE_REAL_SQLITE=1 requires a Node version with node:sqlite; refusing to skip silently.`,
+    )
+  }
+  console.warn(message)
+}
+
+describe.skipIf(!nodeSqlite)('real SQLite execution through native SqliteDriver', () => {
   it('groups correctly, including NULL inputs, mixed expressions and empty aggregates', async () => {
-    const database = new sqlite!.DatabaseSync(':memory:')
+    const database = new nodeSqlite!.DatabaseSync(':memory:')
     // Adapt node:sqlite's statement interface to the better-sqlite3 interface expected by upstream.
     const adapter = {
       exec: (sql: string) => database.exec(sql),

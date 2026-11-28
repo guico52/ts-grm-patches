@@ -157,8 +157,10 @@ export function installExpressionExtensions() {
   })
   // @ts-grm 0.0.13–0.0.14 declares variadic coalesce publicly but its SPI implementation
   // takes one array. Bridge both call shapes once per prototype, not per value.
-  // Version-specific repair: remove/review this bridge before widening the
-  // >=0.0.13 <0.0.15 peer range; a native variadic implementation must not receive [values].
+  // Version-specific repair: the peer range has no upper bound, so this bridge will not
+  // step aside on its own. If upstream ships a native variadic implementation, review or
+  // remove it and add that version to the test matrix; a native variadic implementation
+  // must not receive [values].
   for (const prototype of [
     spi.AbstractExpr.prototype,
     spi.AbstractCmpExpr.prototype,

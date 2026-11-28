@@ -6,6 +6,43 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Drop the upper bound from the `@ts-grm/core` / `@ts-grm/sql` peer range: it is now
+  `>=0.0.13` instead of `>=0.0.13 <0.0.15`. A new upstream minor no longer produces a
+  peer conflict on install. The `coalesce` array bridge remains tied to the verified
+  upstream implementations and is the one repair that will not step aside by itself.
+
+### Added
+
+- Real server execution tests (`test/server/`) for PostgreSQL, MySQL, SQL Server and
+  Oracle. They run when `GRM_PG_URL` / `GRM_MYSQL_URL` / `GRM_MSSQL_URL` /
+  `GRM_ORACLE_URL` are set, print why they skipped otherwise, and fail instead of
+  skipping when `REQUIRE_SERVER_TESTS=1` (CI sets it).
+- CI matrix documented caveat: upstream `0.0.13` ships `using` declarations untranspiled
+  and only loads on Node >=24; `0.0.14` is required for Node 20/22.
+- Coverage thresholds (`vitest.config.ts`) and type-aware ESLint rules on `src/`.
+- GitHub Actions CI: Node 20/22 with upstream `0.0.14`, Node 24 with `0.0.13` and
+  `0.0.14` (0.0.13 cannot be parsed below Node 24), running typecheck, lint, tests with
+  coverage thresholds, and the published-entry contract checks. A separate job runs
+  `test/server/` against PostgreSQL, MySQL, SQL Server and Oracle containers.
+- `pnpm verify:tags` (`scripts/verify-release-tags.mjs`) checks that every version
+  published on npm has a tag, that the tag resolves to a commit on the current branch,
+  and that the checked-out `package.json` version matches the tag name.
+
+### Fixed
+
+- PostgreSQL: `trunc` and `power` were emitted with untyped bind parameters, so the server
+  rejected them with `function trunc(unknown) is not unique` and
+  `function power(unknown) does not exist`. Both now cast to `numeric`, found by the new
+  server execution tests.
+- Release tags were out of sync with npm: `v0.3.1`, `v0.4.0` and `v0.4.1` were missing,
+  and the earlier tags pointed at commits orphaned by a history rewrite. All tags now
+  resolve to commits on `main` whose trees match what npm recorded as `gitHead`.
+- The real-SQLite execution test no longer skips silently on Node <22.3. It prints the
+  reason it skipped, and `REQUIRE_REAL_SQLITE=1` turns a missing `node:sqlite` into a
+  hard failure so CI cannot lose that coverage unnoticed.
+
 ## [0.4.1] - 2026-11-27
 
 > **BREAKING CHANGE**: Removed post-selection condition chaining (`select(...).where(...)` /

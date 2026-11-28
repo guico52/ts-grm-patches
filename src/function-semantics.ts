@@ -146,6 +146,7 @@ function shapeOf(node: spi.Node): Shape {
       shape.children.push(value as spi.Node)
     }
   })
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Upstream visitor dispatch is called with an explicit receiver below (walk.call).
   const walk = spi.AbstractVisitor.prototype[method] as (this: spi.Visitor, value: unknown) => void
   if (typeof walk !== 'function') throw new QuerySemanticError('UNKNOWN_EXPRESSION', String(method))
   walk.call(collect, payload)
