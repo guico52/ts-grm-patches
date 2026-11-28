@@ -149,10 +149,18 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Must be Node >=24: this job runs against the lockfile's upstream 0.0.13,
+          # which cannot be parsed below 24 (see the note on the matrix above).
+          node-version: '24'
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # Health checks prove the service process started; Oracle's PDB still needs a
+      # moment before it accepts logins. Fail here with a per-target message rather
+      # than as an opaque connection timeout inside the test run.
+      - name: Wait for databases
+        run: node scripts/wait-for-databases.mjs --require-all
 
       - name: Run server execution tests
         run: pnpm exec vitest run test/server --reporter=verbose

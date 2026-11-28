@@ -1,5 +1,6 @@
 import js from '@eslint/js'
 import prettierConfig from 'eslint-config-prettier'
+import globals from 'globals'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
@@ -14,14 +15,11 @@ export default tseslint.config(
   {
     // Node globals for the .mjs helpers (scripts, package-contract tests, benches).
     // They sit outside the TypeScript project, so this block keeps the
-    // non-type-aware rule set.
+    // non-type-aware rule set. `globals.node` is used rather than a hand-written
+    // list so a new Node API never needs an eslint config change.
     files: ['**/*.mjs'],
     languageOptions: {
-      globals: {
-        fetch: 'readonly',
-        console: 'readonly',
-        process: 'readonly',
-      },
+      globals: globals.node,
     },
   },
   {
